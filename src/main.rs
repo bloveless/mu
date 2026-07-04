@@ -97,8 +97,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                       }
                     }
                 ],
-                "model": "deepseek-v4-flash",
-                // "model": "anthropic/claude-haiku-4.5",
+                // "model": "deepseek-v4-flash",
+                "model": "anthropic/claude-haiku-4.5",
             }))
             .await?;
 
