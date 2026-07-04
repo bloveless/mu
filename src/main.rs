@@ -1,7 +1,7 @@
 use async_openai::{Client, config::OpenAIConfig};
 use clap::Parser;
 use serde_json::{Value, json};
-use std::{env, process};
+use std::{env, path::Path, process};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -64,6 +64,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     eprintln!("Logs from your program will appear here!");
+
+    if let Some(tool_calls) = response["choices"][0]["message"]["tool_calls"].as_array() {
+        for tool_call in tool_calls {
+            if let Some(function) = tool_call["function"].as_object() {
+                if let Some(name) = function["name"].as_str() {
+                    if name == "Read" {
+                        if let Some(arguments) = function["arguments"].as_str() {
+                            if let Some(args) = serde_json::from_str::<Value>(arguments).ok() {
+                                if let Ok(content) =
+                                    std::fs::read_to_string(args["file_path"].as_str().unwrap())
+                                {
+                                    println!("{}", content);
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // TODO: Uncomment the lines below to pass the first stage
     if let Some(content) = response["choices"][0]["message"]["content"].as_str() {
