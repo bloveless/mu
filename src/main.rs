@@ -2,7 +2,7 @@ use async_openai::{Client, config::OpenAIConfig};
 use clap::Parser;
 use serde_json::{Value, json};
 use std::{env, process};
-use tokio::fs;
+use tokio::{fs, process::Command};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -78,15 +78,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                           }
                         }
                       }
+                    },
+                    {
+                      "type": "function",
+                      "function": {
+                        "name": "Bash",
+                        "description": "Execute a shell command",
+                        "parameters": {
+                          "type": "object",
+                          "required": ["command"],
+                          "properties": {
+                            "command": {
+                              "type": "string",
+                              "description": "The command to execute"
+                            }
+                          }
+                        }
+                      }
                     }
                 ],
-                // "model": "deepseek-v4-flash",
-                "model": "anthropic/claude-haiku-4.5",
+                "model": "deepseek-v4-flash",
+                // "model": "anthropic/claude-haiku-4.5",
             }))
             .await?;
-
-        // You can use print statements as follows for debugging, they'll be visible when running tests.
-        eprintln!("Logs from your program will appear here!");
 
         let message = &response["choices"][0]["message"];
         messages.push(serde_json::to_value(message).unwrap());
@@ -131,6 +145,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "role": "tool",
                             "tool_call_id": id,
                             "content": content,
+                        }))
+                        .unwrap(),
+                    );
+                }
+
+                if name == "Bash" {
+                    let command = arguments["command"].as_str().unwrap();
+                    eprintln!("Executing command: {}", command);
+                    let output = Command::new("bash").arg("-c").arg(command).output().await?;
+                    if !output.status.success() {
+                        eprintln!(
+                            "Command failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                        messages.push(
+                            serde_json::to_value(json!({
+                                "role": "tool",
+                                "tool_call_id": id,
+                                "content": String::from_utf8_lossy(&output.stderr),
+                            }))
+                            .unwrap(),
+                        );
+                        continue;
+                    }
+
+                    messages.push(
+                        serde_json::to_value(json!({
+                            "role": "tool",
+                            "tool_call_id": id,
+                            "content": String::from_utf8_lossy(&output.stdout),
                         }))
                         .unwrap(),
                     );

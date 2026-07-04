@@ -1,1 +1,0 @@
-I've watched through his eyes, I've listened through his ears, and I tell you he's the one. Or at least as close as we've come. The monitor was removed the next day. It was a small gray device that had been attached to the back of his neck since he
