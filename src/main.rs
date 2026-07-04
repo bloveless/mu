@@ -1,6 +1,5 @@
 use async_openai::{Client, config::OpenAIConfig};
 use clap::Parser;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{env, process};
 use tokio::fs;
@@ -10,13 +9,6 @@ use tokio::fs;
 struct Args {
     #[arg(short = 'p', long)]
     prompt: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Message {
-    role: String,
-    tool_call_id: Option<String>,
-    content: String,
 }
 
 #[tokio::main]
@@ -42,7 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "content": args.prompt,
     })];
 
-    loop {
+    for i in 0..20 {
+        eprintln!("Iteration: {}", i);
         let response: Value = client
             .chat()
             .create_byot(json!({
@@ -64,6 +57,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "required": ["file_path"]
                             }
                         }
+                    },
+                    {
+                      "type": "function",
+                      "function": {
+                        "name": "Write",
+                        "description": "Write content to a file",
+                        "parameters": {
+                          "type": "object",
+                          "required": ["file_path", "content"],
+                          "properties": {
+                            "file_path": {
+                              "type": "string",
+                              "description": "The path of the file to write to"
+                            },
+                            "content": {
+                              "type": "string",
+                              "description": "The content to write to the file"
+                            }
+                          }
+                        }
+                      }
                     }
                 ],
                 // "model": "deepseek-v4-flash",
@@ -95,12 +109,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if name == "Read" {
                     let file_path = arguments["file_path"].as_str().unwrap();
-                    let contents = fs::read_to_string(file_path).await?;
+                    let content = fs::read_to_string(file_path).await?;
+                    eprintln!("Reading file: {}", file_path);
                     messages.push(
                         serde_json::to_value(json!({
                             "role": "tool",
                             "tool_call_id": id,
-                            "content": contents,
+                            "content": content,
+                        }))
+                        .unwrap(),
+                    );
+                }
+
+                if name == "Write" {
+                    let file_path = arguments["file_path"].as_str().unwrap();
+                    let content = arguments["content"].as_str().unwrap();
+                    eprintln!("Writing to file: {}", file_path);
+                    fs::write(file_path, content).await?;
+                    messages.push(
+                        serde_json::to_value(json!({
+                            "role": "tool",
+                            "tool_call_id": id,
+                            "content": content,
                         }))
                         .unwrap(),
                     );
