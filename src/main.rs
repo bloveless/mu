@@ -1,5 +1,12 @@
+mod theme;
+mod ui;
+mod wrap;
+
 use async_openai::{Client, config::OpenAIConfig};
 use clap::Parser;
+use color_eyre::Result;
+use crossterm::event::{self, KeyCode};
+use ratatui::widgets::ScrollbarState;
 use serde_json::{Value, json};
 use std::{env, process};
 use tokio::{fs, process::Command};
@@ -7,19 +14,19 @@ use tokio::{fs, process::Command};
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
-    #[arg(short = 'p', long)]
-    prompt: String,
+    // #[arg(short = 'p', long)]
+    // prompt: String,
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let base_url = env::var("OPENROUTER_BASE_URL")
-        .unwrap_or_else(|_| "https://openrouter.ai/api/v1".to_string());
+    let base_url =
+        env::var("OPENCODE_BASE_URL").unwrap_or_else(|_| "https://opencode.ai/zen/v1".to_string());
 
-    let api_key = env::var("OPENROUTER_API_KEY").unwrap_or_else(|_| {
-        eprintln!("OPENROUTER_API_KEY is not set");
+    let api_key = env::var("OPENCODE_API_KEY").unwrap_or_else(|_| {
+        eprintln!("OPENCODE_API_KEY is not set");
         process::exit(1);
     });
 
@@ -29,9 +36,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Client::with_config(config);
 
+    color_eyre::install()?;
+
+    let mut vertical = ScrollbarState::new(0);
+    return ratatui::run(|terminal| {
+        loop {
+            terminal.draw(|frame| ui::render(frame, &mut vertical))?;
+            if let Some(key) = event::read()?.as_key_press_event() {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                    KeyCode::Char('j') | KeyCode::Down => vertical.next(),
+                    KeyCode::Char('k') | KeyCode::Up => vertical.prev(),
+                    _ => {}
+                }
+            }
+        }
+    });
+
     let mut messages = vec![json!({
         "role": "user",
-        "content": args.prompt,
+        "content": "Sup",
     })];
 
     for i in 0..20 {
@@ -97,8 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                       }
                     }
                 ],
-                // "model": "deepseek-v4-flash",
-                "model": "anthropic/claude-haiku-4.5",
+                "model": "deepseek-v4-flash-free",
             }))
             .await?;
 
