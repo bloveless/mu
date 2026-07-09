@@ -2,14 +2,18 @@ mod theme;
 mod ui;
 mod wrap;
 
-use async_openai::{Client, config::OpenAIConfig};
+use std::{env, process};
+
+use async_openai::{
+    Client,
+    config::{Config, OpenAIConfig},
+};
 use clap::Parser;
 use color_eyre::Result;
-use crossterm::event::{self, KeyCode};
-use ratatui::widgets::ScrollbarState;
+use crossterm::event::{self, Event};
 use serde_json::{Value, json};
-use std::{env, process};
-use tokio::{fs, process::Command};
+use tokio::{fs, process::Command, sync::mpsc};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -20,7 +24,24 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    color_eyre::install()?;
+    let _args = Args::parse();
+    let result = run_app().await;
+    println!("after run_app");
+    result
+}
+
+enum AppEvent {
+    Tick,
+    Key(crossterm::event::KeyEvent),
+}
+
+async fn run_app() -> Result<()> {
+    // Channel to bridge async inputs/events to the UI loop
+    let (tx, rx) = mpsc::unbounded_channel::<AppEvent>();
+    let token = CancellationToken::new();
+
+    let _args = Args::parse();
 
     let base_url =
         env::var("OPENCODE_BASE_URL").unwrap_or_else(|_| "https://opencode.ai/zen/v1".to_string());
@@ -34,31 +55,58 @@ async fn main() -> Result<()> {
         .with_api_base(base_url)
         .with_api_key(api_key);
 
-    let client = Client::with_config(config);
+    let ai_event_tx = tx.clone();
+    let openai_token = token.clone();
+    tokio::task::spawn(async move {
+        let client = Client::with_config(config);
+        openai_stuff(&openai_token, &client, &ai_event_tx).await
+    });
 
-    color_eyre::install()?;
-
-    let mut vertical = ScrollbarState::new(0);
-    return ratatui::run(|terminal| {
-        loop {
-            terminal.draw(|frame| ui::render(frame, &mut vertical))?;
-            if let Some(key) = event::read()?.as_key_press_event() {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                    KeyCode::Char('j') | KeyCode::Down => vertical.next(),
-                    KeyCode::Char('k') | KeyCode::Up => vertical.prev(),
+    // Spawn a blocking task for crossterm events — event::poll and event::read
+    // are blocking calls and must NOT run on an async tokio task.
+    let event_tx = tx.clone();
+    let event_token = token.clone();
+    tokio::task::spawn_blocking(move || {
+        while !event_token.is_cancelled() {
+            if let Ok(true) = event::poll(std::time::Duration::from_millis(50)) {
+                match event::read() {
+                    Ok(Event::Key(key)) => {
+                        if event_tx.send(AppEvent::Key(key)).is_err() {
+                            break;
+                        }
+                    }
                     _ => {}
                 }
+            }
+            // Send periodic tick to update timers/animations
+            if event_tx.send(AppEvent::Tick).is_err() {
+                break;
             }
         }
     });
 
+    let mut terminal = ratatui::init();
+    let result = ui::App::new(rx).run(&mut terminal).await;
+    ratatui::restore();
+    token.cancel();
+    result
+}
+
+async fn openai_stuff<T: Config>(
+    token: &CancellationToken,
+    client: &Client<T>,
+    _ai_event_tx: &mpsc::UnboundedSender<AppEvent>,
+) -> Result<()> {
     let mut messages = vec![json!({
         "role": "user",
         "content": "Sup",
     })];
 
     for i in 0..20 {
+        if token.is_cancelled() {
+            eprintln!("agent loop cancelled");
+            return Ok(());
+        }
         eprintln!("Iteration: {}", i);
         let response: Value = client
             .chat()
@@ -129,11 +177,11 @@ async fn main() -> Result<()> {
         messages.push(serde_json::to_value(message).unwrap());
         let tool_calls = message["tool_calls"].as_array();
 
-        if tool_calls.is_none() {
-            if let Some(content) = message["content"].as_str() {
-                println!("{}", content);
-                break;
-            }
+        if tool_calls.is_none()
+            && let Some(content) = message["content"].as_str()
+        {
+            println!("{}", content);
+            break;
         }
 
         if let Some(tool_calls) = message["tool_calls"].as_array() {
@@ -206,5 +254,6 @@ async fn main() -> Result<()> {
         }
     }
 
+    eprintln!("agent loop exited");
     Ok(())
 }

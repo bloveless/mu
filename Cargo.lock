@@ -355,6 +355,7 @@ dependencies = [
  "ratatui",
  "serde_json",
  "tokio",
+ "tokio-util",
  "tui-scrollview",
  "unicode-width",
 ]
