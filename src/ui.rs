@@ -14,6 +14,7 @@
 //! [widget examples]: https://github.com/ratatui/ratatui/blob/main/ratatui-widgets/examples
 //! [examples readme]: https://github.com/ratatui/ratatui/blob/main/examples/README.md
 
+
 use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
@@ -24,6 +25,7 @@ use ratatui::widgets::{
 };
 use ratatui::{DefaultTerminal, Frame};
 use tokio::sync::mpsc;
+use tokio::time::{Duration, timeout};
 
 use crate::theme::Theme;
 use crate::wrap::wrap;
@@ -38,8 +40,15 @@ enum HistoryItem {
     UserPrompt(String),
     AssistantResponse(String),
     SystemError(String),
-    ToolCallStart { name: String, args: String },
-    ToolCallOutput { name: String, output: String, success: bool },
+    ToolCallStart {
+        name: String,
+        args: String,
+    },
+    ToolCallOutput {
+        name: String,
+        output: String,
+        success: bool,
+    },
 }
 
 pub struct App {
@@ -75,88 +84,93 @@ impl App {
     }
 
     pub async fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        
         loop {
             terminal.draw(|frame| self.render(frame))?;
 
-            if let Some(event) = self.events.recv().await {
-                match event {
-                    AppEvent::Key(key) => match self.focus {
-                        Focus::Input => match (key.code, key.modifiers) {
-                            (KeyCode::Char('c'), KeyModifiers::CONTROL) => break Ok(()),
-                            (KeyCode::Char('j' | 'k'), KeyModifiers::CONTROL) => {
-                                self.toggle_focus();
-                            }
-                            (KeyCode::Char(char), _) => {
-                                self.input.insert(self.cursor, char);
-                                self.cursor += char.len_utf8();
-                            }
-                            (KeyCode::Enter, _) if !self.input.is_empty() => {
-                                self.history
-                                    .push(HistoryItem::UserPrompt(self.input.clone()));
-                                self.ai_events
-                                    .send(AIEvent::UserPrompt(self.input.clone()))?;
-                                self.input = String::new();
-                                self.cursor = 0;
-                            }
-                            (KeyCode::Backspace, _) if self.cursor > 0 => {
-                                self.cursor = self.input.floor_char_boundary(self.cursor - 1);
-                                self.input.remove(self.cursor);
-                            }
-                            (KeyCode::Delete, _) if self.cursor < self.input.len() => {
-                                self.input.remove(self.cursor);
-                            }
-                            (KeyCode::Left, _) if self.cursor > 0 => {
-                                self.cursor = self.input.floor_char_boundary(self.cursor - 1);
-                            }
-                            (KeyCode::Right, _) if self.cursor < self.input.len() => {
-                                self.cursor = self.input.ceil_char_boundary(self.cursor + 1);
-                            }
-                            (KeyCode::Home, _) => self.cursor = 0,
-                            (KeyCode::End, _) => self.cursor = self.input.len(),
-                            _ => {}
-                        },
-                        Focus::History => match (key.code, key.modifiers) {
-                            (KeyCode::Char('j' | 'k'), KeyModifiers::CONTROL) => {
-                                self.toggle_focus();
-                            }
-                            (KeyCode::Char('q') | KeyCode::Esc, _) => break Ok(()),
-                            (KeyCode::Char('j') | KeyCode::Down, KeyModifiers::NONE) => {
-                                self.scroll_down();
-                            }
-                            (KeyCode::Char('k') | KeyCode::Up, KeyModifiers::NONE) => {
-                                self.scroll_up();
-                            }
-                            (KeyCode::Char('u'), KeyModifiers::CONTROL) => self.scroll_page_up(),
-                            (KeyCode::Char('d'), KeyModifiers::CONTROL) => self.scroll_page_down(),
-                            _ => {}
-                        },
+            let maybe_event = timeout(Duration::from_millis(250), self.events.recv()).await;
+
+            match maybe_event {
+                Ok(Some(AppEvent::Key(key))) => match self.focus {
+                    Focus::Input => match (key.code, key.modifiers) {
+                        (KeyCode::Char('c'), KeyModifiers::CONTROL) => break Ok(()),
+                        (KeyCode::Char('j' | 'k'), KeyModifiers::CONTROL) => {
+                            self.toggle_focus();
+                        }
+                        (KeyCode::Char(char), _) => {
+                            self.input.insert(self.cursor, char);
+                            self.cursor += char.len_utf8();
+                        }
+                        (KeyCode::Enter, _) if !self.input.is_empty() => {
+                            self.history
+                                .push(HistoryItem::UserPrompt(self.input.clone()));
+                            self.ai_events
+                                .send(AIEvent::UserPrompt(self.input.clone()))?;
+                            self.input = String::new();
+                            self.cursor = 0;
+                        }
+                        (KeyCode::Backspace, _) if self.cursor > 0 => {
+                            self.cursor = self.input.floor_char_boundary(self.cursor - 1);
+                            self.input.remove(self.cursor);
+                        }
+                        (KeyCode::Delete, _) if self.cursor < self.input.len() => {
+                            self.input.remove(self.cursor);
+                        }
+                        (KeyCode::Left, _) if self.cursor > 0 => {
+                            self.cursor = self.input.floor_char_boundary(self.cursor - 1);
+                        }
+                        (KeyCode::Right, _) if self.cursor < self.input.len() => {
+                            self.cursor = self.input.ceil_char_boundary(self.cursor + 1);
+                        }
+                        (KeyCode::Home, _) => self.cursor = 0,
+                        (KeyCode::End, _) => self.cursor = self.input.len(),
+                        _ => {}
                     },
-                    AppEvent::AssistantResponse(response) => {
-                        if !response.is_empty() {
-                            self.history.push(HistoryItem::AssistantResponse(response));
+                    Focus::History => match (key.code, key.modifiers) {
+                        (KeyCode::Char('j' | 'k'), KeyModifiers::CONTROL) => {
+                            self.toggle_focus();
                         }
-                    }
-                    AppEvent::Error(error) => {
-                        if !error.is_empty() {
-                            self.history.push(HistoryItem::SystemError(error));
+                        (KeyCode::Char('q') | KeyCode::Esc, _) => break Ok(()),
+                        (KeyCode::Char('j') | KeyCode::Down, KeyModifiers::NONE) => {
+                            self.scroll_down();
                         }
+                        (KeyCode::Char('k') | KeyCode::Up, KeyModifiers::NONE) => {
+                            self.scroll_up();
+                        }
+                        (KeyCode::Char('u'), KeyModifiers::CONTROL) => self.scroll_page_up(),
+                        (KeyCode::Char('d'), KeyModifiers::CONTROL) => self.scroll_page_down(),
+                        _ => {}
+                    },
+                },
+                Ok(Some(AppEvent::Resize)) => {
+                    // Terminal size changed; the next draw will use the new area.
+                }
+                Ok(Some(AppEvent::AssistantResponse(response))) => {
+                    if !response.is_empty() {
+                        self.history.push(HistoryItem::AssistantResponse(response));
                     }
-                    AppEvent::ToolCallStart { name, args } => {
-                        self.history.push(HistoryItem::ToolCallStart { name, args });
+                }
+                Ok(Some(AppEvent::Error(error))) => {
+                    if !error.is_empty() {
+                        self.history.push(HistoryItem::SystemError(error));
                     }
-                    AppEvent::ToolCallOutput {
+                }
+                Ok(Some(AppEvent::ToolCallStart { name, args })) => {
+                    self.history.push(HistoryItem::ToolCallStart { name, args });
+                }
+                Ok(Some(AppEvent::ToolCallOutput {
+                    name,
+                    output,
+                    success,
+                })) => {
+                    self.history.push(HistoryItem::ToolCallOutput {
                         name,
                         output,
                         success,
-                    } => {
-                        self.history.push(HistoryItem::ToolCallOutput {
-                            name,
-                            output,
-                            success,
-                        });
-                    }
-                    AppEvent::Tick => {}
+                    });
+                }
+                Ok(None) => break Ok(()),
+                Err(_) => {
+                    // No event within the idle timeout; loop around and redraw.
                 }
             }
         }
@@ -175,39 +189,35 @@ impl App {
         }
     }
 
+    /// Scroll up by one line.
     fn scroll_up(&mut self) {
-        let position = self.scrollbar_state.get_position().saturating_sub(1);
-        self.scrollbar_state = ScrollbarState::new(self.content_length)
-            .viewport_content_length(self.viewport_length)
-            .position(position);
+        self.scrollbar_state.prev();
         self.follow_bottom = false;
     }
 
+    /// Scroll down by one line.
     fn scroll_down(&mut self) {
+        // Clamp so the last viewport worth of content is the final position.
         let max = self.content_length.saturating_sub(self.viewport_length);
         let position = (self.scrollbar_state.get_position() + 1).min(max);
-        self.scrollbar_state = ScrollbarState::new(self.content_length)
-            .viewport_content_length(self.viewport_length)
-            .position(position);
+        self.scrollbar_state = self.scrollbar_state.position(position);
         self.follow_bottom = false;
     }
 
+    /// Scroll up by half a viewport.
     fn scroll_page_up(&mut self) {
         let delta = self.viewport_length / 2;
         let position = self.scrollbar_state.get_position().saturating_sub(delta);
-        self.scrollbar_state = ScrollbarState::new(self.content_length)
-            .viewport_content_length(self.viewport_length)
-            .position(position);
+        self.scrollbar_state = self.scrollbar_state.position(position);
         self.follow_bottom = false;
     }
 
+    /// Scroll down by half a viewport.
     fn scroll_page_down(&mut self) {
         let delta = self.viewport_length / 2;
         let max = self.content_length.saturating_sub(self.viewport_length);
         let position = (self.scrollbar_state.get_position() + delta).min(max);
-        self.scrollbar_state = ScrollbarState::new(self.content_length)
-            .viewport_content_length(self.viewport_length)
-            .position(position);
+        self.scrollbar_state = self.scrollbar_state.position(position);
         self.follow_bottom = false;
     }
 
@@ -251,7 +261,7 @@ impl App {
         );
     }
 
-    /// Render some content.
+    /// Render the conversation history with scroll support.
     fn render_content(&mut self, frame: &mut Frame, area: Rect) {
         let mut content = Vec::new();
         for item in &self.history {
@@ -292,7 +302,10 @@ impl App {
                         Theme::tool_badge_running(),
                     )));
                     for l in wrap(args, area.width.saturating_sub(2)) {
-                        content.push(Line::from(Span::styled(format!("  {l}"), Theme::tool_args())));
+                        content.push(Line::from(Span::styled(
+                            format!("  {l}"),
+                            Theme::tool_args(),
+                        )));
                     }
                     content.push(Line::default());
                 }
@@ -306,10 +319,7 @@ impl App {
                     } else {
                         Theme::tool_badge_failed()
                     };
-                    content.push(Line::from(Span::styled(
-                        format!("▌ {name} "),
-                        badge_style,
-                    )));
+                    content.push(Line::from(Span::styled(format!("▌ {name} "), badge_style)));
                     for l in wrap(output, area.width.saturating_sub(2)) {
                         content.push(Line::from(Span::styled(
                             format!("  {l}"),
@@ -330,7 +340,10 @@ impl App {
         };
         self.content_length = content_length;
         self.viewport_length = viewport_length;
-        self.scrollbar_state = ScrollbarState::new(content_length)
+        // Update the existing state rather than rebuilding from scratch.
+        self.scrollbar_state = self
+            .scrollbar_state
+            .content_length(content_length)
             .viewport_content_length(viewport_length)
             .position(position);
         frame.render_widget(
