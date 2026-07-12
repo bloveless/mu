@@ -55,10 +55,21 @@ enum AppEvent {
         output: String,
         success: bool,
     },
+    /// The agent finished a turn: it stopped, hit the iteration cap, was
+    /// cancelled by the user, or hit a per-turn error already surfaced as
+    /// `AppEvent::Error`. The UI uses this to clear the "working…" indicator
+    /// and re-enable prompt submission.
+    TurnEnd,
+    /// The agent task is terminating with an unrecoverable error. The UI should
+    /// exit and surface `msg` to the user via eyre so it can be reported.
+    Fatal(String),
 }
 
 enum AIEvent {
-    UserPrompt(String),
+    /// A new user prompt paired with a turn-scoped cancellation token. The UI
+    /// keeps a clone of the same token so it can cancel just this in-flight
+    /// turn with the Esc key without affecting other turns or app lifetime.
+    UserPrompt(String, CancellationToken),
 }
 
 async fn run_app() -> Result<()> {
@@ -83,9 +94,16 @@ async fn run_app() -> Result<()> {
 
     let openai_token = token.clone();
     let openai_events = event_tx.clone();
+    let fatal_events = event_tx.clone();
     join_set.spawn(async move {
         let client = Client::with_config(config);
-        openai_stuff(&openai_token, &client, openai_events, ai_rx).await
+        let result = openai_stuff(&openai_token, &client, openai_events, ai_rx).await;
+        if let Err(err) = &result {
+            // The agent is dying; tell the UI so it can exit with a useful
+            // message instead of hanging on the next prompt send.
+            let _ = fatal_events.send(AppEvent::Fatal(format!("{err:?}")));
+        }
+        result
     });
 
     // Spawn a blocking task for crossterm events — event::poll and event::read
@@ -139,22 +157,30 @@ async fn openai_stuff<T: Config>(
     let mut messages: Vec<ChatCompletionRequestMessage> =
         vec![ChatCompletionRequestSystemMessage::from(DEFAULT_INSTRUCTIONS).into()];
 
-    while !token.is_cancelled() {
-        let event = match rx_events.recv().await {
-            Some(event) => event,
-            None => break,
+    loop {
+        // Wait for the next user prompt, but bail out immediately if the app
+        // is shutting down. The UI also drops `ai_tx` on quit, which drives
+        // `recv` to `None` as a backup path.
+        let (prompt, turn_token) = tokio::select! {
+            ev = rx_events.recv() => match ev {
+                Some(AIEvent::UserPrompt(p, t)) => (p, t),
+                None => return Ok(()),
+            },
+            _ = token.cancelled() => return Ok(()),
         };
 
-        match event {
-            AIEvent::UserPrompt(prompt) => {
-                messages.push(ChatCompletionRequestUserMessage::from(prompt).into())
-            }
-        }
+        messages.push(ChatCompletionRequestUserMessage::from(prompt).into());
+
+        // Remember where the turn began so a cancelled turn can be rolled back
+        // out of the conversation history. A half-finished tool_call sequence
+        // with no matching tool results would otherwise make the next API
+        // request fail validation.
+        let checkpoint = messages.len();
 
         let turn_result: Result<()> = async {
-            for _i in 0..20 {
-                if token.is_cancelled() {
-                    return Ok(());
+            'turn: for _i in 0..20 {
+                if token.is_cancelled() || turn_token.is_cancelled() {
+                    break 'turn;
                 }
 
                 let request = CreateChatCompletionRequestArgs::default()
@@ -237,7 +263,15 @@ async fn openai_stuff<T: Config>(
                     ])
                     .build()?;
 
-                let response = client.chat().create(request).await?;
+                // Bind the chat handle first: `client.chat()` returns a borrowed
+                // temporary whose lifetime the create-future relies on, so it
+                // must outlive the `select!` polling.
+                let chat = client.chat();
+                let response = tokio::select! {
+                    r = chat.create(request) => r?,
+                    _ = token.cancelled() => break 'turn,
+                    _ = turn_token.cancelled() => break 'turn,
+                };
 
                 let Some(choice) = response.choices.first() else {
                     break;
@@ -273,7 +307,12 @@ async fn openai_stuff<T: Config>(
                     break;
                 };
 
-                let mut handles = Vec::new();
+                // Tool calls run on a dedicated JoinSet so the whole batch can
+                // be aborted atomically when the app or the current turn is
+                // cancelled. Aborting drops the futures, which cancels in-flight
+                // `fetch` requests and (via `kill_on_drop`) terminates running
+                // `bash` children.
+                let mut tool_set: JoinSet<ChatCompletionRequestMessage> = JoinSet::new();
                 for tool_call_enum in tool_calls {
                     // Extract the function tool call from the enum
                     if let ChatCompletionMessageToolCalls::Function(tool_call) = tool_call_enum {
@@ -287,7 +326,7 @@ async fn openai_stuff<T: Config>(
                         });
 
                         let tx_events = tx_events.clone();
-                        let handle = tokio::spawn(async move {
+                        tool_set.spawn(async move {
                             let result: Result<String> = call_fn(&name, &args).await;
                             let output = match &result {
                                 Ok(output) => output.clone(),
@@ -299,27 +338,43 @@ async fn openai_stuff<T: Config>(
                                 output: output.clone(),
                                 success,
                             });
-                            let tool_message: ChatCompletionRequestMessage =
-                                ChatCompletionRequestToolMessage {
-                                    content: output.into(),
-                                    tool_call_id: id,
-                                }
-                                .into();
-                            Ok::<ChatCompletionRequestMessage, color_eyre::Report>(tool_message)
+                            ChatCompletionRequestToolMessage {
+                                content: output.into(),
+                                tool_call_id: id,
+                            }
+                            .into()
                         });
-                        handles.push(handle);
                     }
                 }
 
-                for handle in handles {
-                    if let Ok(Ok(tool_message)) = handle.await {
-                        messages.push(tool_message);
+                // Drive the tool batch to completion, but abort everything the
+                // instant it is cancelled.
+                let cancelled = loop {
+                    let next = tokio::select! {
+                        n = tool_set.join_next() => n,
+                        _ = turn_token.cancelled() => { tool_set.abort_all(); break true; },
+                        _ = token.cancelled() => { tool_set.abort_all(); break true; },
+                    };
+                    match next {
+                        Some(Ok(tool_message)) => messages.push(tool_message),
+                        // A panicked or aborted tool task: nothing to append;
+                        // errors were already surfaced as ToolCallOutput.
+                        Some(Err(_)) => {}
+                        None => break false,
                     }
+                };
+                if cancelled {
+                    break 'turn;
                 }
             }
             Ok(())
         }
         .await;
+        if turn_token.is_cancelled() {
+            // Roll back any half-finished assistant/tool messages from this
+            // cancelled turn so the next prompt starts from a clean state.
+            messages.truncate(checkpoint);
+        }
         if let Err(err) = turn_result {
             let debug = format!(
                 "{}\nMessages: {}",
@@ -328,6 +383,9 @@ async fn openai_stuff<T: Config>(
             );
             let _ = tx_events.send(AppEvent::Error(debug));
         }
+        // Let the UI know the turn is over either way so it can clear the
+        // "working…" indicator and re-enable prompt submission.
+        let _ = tx_events.send(AppEvent::TurnEnd);
     }
 
     Ok(())
@@ -359,7 +417,15 @@ async fn call_fn(name: &str, args: &str) -> Result<String> {
             let command = arguments["command"]
                 .as_str()
                 .ok_or_else(|| eyre!("tool 'bash' requires a string field 'command'"))?;
-            let output = Command::new("bash").arg("-c").arg(command).output().await?;
+            // kill_on_drop ensures that aborting the tool task (on Esc / app
+            // shutdown) terminates the child instead of orphaning it. There is
+            // deliberately no per-command timeout: the user cancels with Esc.
+            let output = Command::new("bash")
+                .arg("-c")
+                .arg(command)
+                .kill_on_drop(true)
+                .output()
+                .await?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 bail!("command exited with {}: {stderr}", output.status);
@@ -370,7 +436,13 @@ async fn call_fn(name: &str, args: &str) -> Result<String> {
             let url = arguments["url"]
                 .as_str()
                 .ok_or_else(|| eyre!("tool 'fetch' requires a string field 'url'"))?;
-            let response = reqwest::get(url).await?;
+            // A bounded client with a hard 30s timeout so an unresponsive URL
+            // can never stall the agent indefinitely. Dropping the future (on
+            // Esc / shutdown) also cancels the request cleanly.
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()?;
+            let response = client.get(url).send().await?;
             response.text().await.map_err(Into::into)
         }
         _ => Err(eyre!("attempted to call unknown tool '{name}'")),
