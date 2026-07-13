@@ -440,9 +440,9 @@ async fn call_fn(name: &str, args: &str) -> Result<String> {
                 .ok_or_else(|| eyre!("tool 'edit' requires a string field 'new_string'"))?;
 
             if old_string.is_empty() {
-                // Create-a-new-file path. An empty `old_string` is the 
-                // convention for "this file doesn't exist yet"; refuse to 
-                // clobber an existing file so the model can't accidentally 
+                // Create-a-new-file path. An empty `old_string` is the
+                // convention for "this file doesn't exist yet"; refuse to
+                // clobber an existing file so the model can't accidentally
                 // blank out content it meant to edit.
                 if fs::try_exists(file_path).await? {
                     bail!(
@@ -452,12 +452,13 @@ async fn call_fn(name: &str, args: &str) -> Result<String> {
                          exactly."
                     );
                 }
-                // Create parent directories so a new file can be added in a 
+                // Create parent directories so a new file can be added in a
                 // new subdirectory in a single step, mirroring `write`.
                 if let Some(parent) = std::path::Path::new(file_path).parent()
-                    && !parent.as_os_str().is_empty() {
-                        fs::create_dir_all(parent).await?;
-                    }
+                    && !parent.as_os_str().is_empty()
+                {
+                    fs::create_dir_all(parent).await?;
+                }
                 fs::write(file_path, new_string).await?;
                 Ok(format!("Created {file_path}"))
             } else {
