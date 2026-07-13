@@ -13,15 +13,16 @@
 //! the wrapping cost.  The total rendered height and the input-area height
 //! are also cached to avoid re-measuring on every frame.
 
-use color_eyre::{Result, eyre::eyre};
+use color_eyre::{eyre::eyre, Result};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect, Size};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
-use tokio::sync::mpsc;
-use tokio::time::{Duration, timeout};
+use std::sync::mpsc::Receiver;
+use std::time::Duration;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 
@@ -149,7 +150,7 @@ impl HistoryItem {
 // ---------------------------------------------------------------------------
 
 pub struct App {
-    events: mpsc::UnboundedReceiver<crate::AppEvent>,
+    events: Receiver<crate::AppEvent>,
     history: Vec<HistoryItem>,
     scroll_view_state: ScrollViewState,
     /// Cached scroll view buffer, rebuilt only when content or layout
@@ -181,13 +182,17 @@ pub struct App {
     /// The turn-scoped cancellation token for the turn currently in flight;
     /// `None` when idle. The agent holds a clone of the same token.
     current_turn: Option<CancellationToken>,
-    ai_events: mpsc::UnboundedSender<crate::AIEvent>,
+    /// Sender for pushing user prompts to the async agent. This is a *tokio*
+    /// unbounded sender only because the agent needs to `select!` over its
+    /// receiver; `send` is itself synchronous, so the (sync) UI thread can
+    /// hold it without touching the runtime.
+    ai_events: UnboundedSender<crate::AIEvent>,
 }
 
 impl App {
     pub fn new(
-        events: mpsc::UnboundedReceiver<crate::AppEvent>,
-        ai_events: mpsc::UnboundedSender<crate::AIEvent>,
+        events: Receiver<crate::AppEvent>,
+        ai_events: UnboundedSender<crate::AIEvent>,
     ) -> Self {
         Self {
             events,
@@ -209,7 +214,7 @@ impl App {
         }
     }
 
-    pub async fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+    pub fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         loop {
             terminal.draw(|frame| self.render(frame))?;
 
@@ -218,9 +223,13 @@ impl App {
             // burst of agent output (streamed tokens / many tool results)
             // into a single redraw keeps typing and scrolling responsive as
             // history grows.
-            let maybe_event = timeout(Duration::from_millis(250), self.events.recv()).await;
-            match maybe_event {
-                Ok(Some(first)) => {
+            //
+            // `recv_timeout` is a blocking std call — this thread is fully
+            // synchronous and never touches the tokio runtime. The idle
+            // timeout doubles as the redraw tick (e.g. for a future
+            // blinking cursor).
+            match self.events.recv_timeout(Duration::from_millis(250)) {
+                Ok(first) => {
                     let mut quit = false;
                     let mut batch = Vec::with_capacity(4);
                     batch.push(first);
@@ -237,11 +246,15 @@ impl App {
                         return Ok(());
                     }
                 }
-                Ok(None) => return Ok(()),
-                Err(_) => {
-                    // No event within the idle timeout; loop around and
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    // No event within the idle window; loop around and
                     // redraw (e.g. for a blinking cursor, even though we
                     // don't have one yet).
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    // Both forwarders (agent + crossterm) have dropped their
+                    // senders. Treat that as a clean shutdown.
+                    return Ok(());
                 }
             }
         }
@@ -273,9 +286,7 @@ impl App {
             }
             AppEvent::AssistantResponse(response) if !response.is_empty() => {
                 self.history
-                    .push(HistoryItem::AssistantResponse(WrappedItem::new(
-                        response,
-                    )));
+                    .push(HistoryItem::AssistantResponse(WrappedItem::new(response)));
                 self.scroll_view_dirty = true;
                 self.scroll_to_bottom_if_following();
                 Ok(false)
@@ -362,9 +373,7 @@ impl App {
                     Ok(false)
                 }
                 // Enter submits the prompt.
-                (KeyCode::Enter, KeyModifiers::NONE)
-                    if !self.input.is_empty() && !self.working =>
-                {
+                (KeyCode::Enter, KeyModifiers::NONE) if !self.input.is_empty() && !self.working => {
                     self.submit_prompt()
                 }
                 // Shift+Enter inserts a newline.
@@ -580,12 +589,7 @@ impl App {
 
         // ----- (re)build the scroll view if stale -----
         let size = Size::new(area.width, total_height);
-        if self.scroll_view_dirty
-            || self
-                .scroll_view
-                .as_ref()
-                .is_none_or(|sv| sv.size() != size)
-        {
+        if self.scroll_view_dirty || self.scroll_view.as_ref().is_none_or(|sv| sv.size() != size) {
             self.rebuild_scroll_view(area.width, wrap_width, size);
         }
 
@@ -731,10 +735,7 @@ impl App {
             Block::default()
                 .borders(Borders::TOP)
                 .border_style(Theme::agent_tag())
-                .title(Line::from(Span::styled(
-                    " ● working… ",
-                    Theme::agent_tag(),
-                )))
+                .title(Line::from(Span::styled(" ● working… ", Theme::agent_tag())))
         } else {
             Block::default().border_style(style).borders(Borders::TOP)
         };
@@ -810,12 +811,7 @@ fn render_tagged_block(
         // two spaces as a separate `Span::raw` so `l` is used verbatim.
         let lines: Vec<Line> = wrapped
             .iter()
-            .map(|l| {
-                Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(l.as_str(), text_style),
-                ])
-            })
+            .map(|l| Line::from(vec![Span::raw("  "), Span::styled(l.as_str(), text_style)]))
             .collect();
         let text_paragraph = Paragraph::new(lines);
         scroll_view.render_widget(

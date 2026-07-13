@@ -51,22 +51,49 @@ src/
 
 ### main.rs Structure
 
-1. **`main()`** — installs `color_eyre` + `console_subscriber` (Tokio console),
-   parses the (currently empty) `clap` `Args`, and calls `run_app()`.
-2. **`run_app()`** — sets up three cooperating tasks on a `JoinSet` plus two
-   `mpsc::unbounded_channel`s for event flow:
-   - The **agent task** running `openai_stuff()` (sends `AppEvent`s to the UI).
-   - A **`spawn_blocking` crossterm task** polling `event::poll`/`event::read`
-     (these are blocking calls and must not run on an async task) and forwarding
-     `Key`/`Resize` events.
-   - The **UI task** `ui::App::new(event_rx, ai_tx).run(&mut terminal)`.
-   - A shared app-wide `CancellationToken` shuts everything down; the JoinSet is
-     drained with a 5s timeout on exit.
-3. **`AppEvent` / `AIEvent`** — the two halves of the UI↔agent channel. The UI sends
+The app runs in **three execution contexts**, each in its own place. The
+boundary lives in the source: above the two `thread::spawn` calls nothing is
+async and no runtime exists; the runtime is built and driven entirely inside
+the agent thread.
+
+1. **`main()`** — a **plain sync `fn`** (no `#[tokio::main]`). Installs
+   `color_eyre` + `console_subscriber` (Tokio console), parses the (currently
+   empty) `clap` `Args`, sets up the channels + shared `CancellationToken`, then,
+   in order:
+   - **Spawns the `"crossterm-events"` std thread** — polls `event::poll`/
+     `event::read` (blocking calls that must not run on an async task) and forwards
+     `Key`/`Resize` events into the same std channel the agent writes to. Shuts
+     down by polling the shared token (≤100ms) or by channel disconnect.
+   - **Spawns the `"agent-runtime"` std thread** — this thread **owns the tokio
+     runtime**: it builds a multi-thread runtime via
+     `tokio::runtime::Builder::new_multi_thread().enable_all().build()` and drives
+     `run_agent()` with a single `runtime.block_on(...)` *entirely inside the
+     thread*. `main` never holds a runtime handle. The only citizen of the runtime
+     is the agent (`openai_stuff`) plus the per-batch tool `JoinSet`s it spawns. If
+     the runtime fails to build, a `Fatal` event is sent to the UI.
+   - **Runs the ratatui UI directly on the `main` thread** —
+     `ui::App::new(event_rx, ai_tx).run(&mut terminal)` with `ratatui::init`/
+     `restore` bracketing it on `main`, so raw-mode setup/teardown happens on the
+     very thread that draws.
+   - After `App::run` returns: cancels the token, `join`s the agent thread (its
+     `Ok`/`Err`/panic result decides whether to surface a build/init error), and
+     joins the crossterm thread.
+2. **`run_agent()`** — runs entirely inside the tokio runtime on the agent thread.
+   Drives the sole root task `openai_stuff()`; when it returns (on cancel or `ai_rx`
+   disconnect), surfaces any error as a `Fatal` event to the UI. There is **no**
+   UI-completion coordination (no oneshot) — `main`/the UI is what knows when the
+   app is done and cancels the shared token to wind this side down.
+3. **Channels (the only boundary crossing):**
+   - agent + crossterm → UI is a **std** `mpsc::channel` (the UI blocks on
+     `Receiver::recv_timeout`, never `await`).
+   - UI → agent is a **tokio** `mpsc::unbounded_channel` so the agent can `select!`
+     over its receiver; its `send` is synchronous, so the sync UI on `main` holds
+     the sender without joining the runtime.
+4. **`AppEvent` / `AIEvent`** — the two halves of the UI↔agent channel. The UI sends
    `AIEvent::UserPrompt(String, CancellationToken)`; the agent streams back
    `AssistantResponse`, `ToolCallStart`, `ToolCallOutput`, `Error`, `TurnEnd`, and
    fatal `Fatal` events.
-4. **`openai_stuff()`** — the live agent loop (NOT dead code):
+5. **`openai_stuff()`** — the live agent loop (NOT dead code):
    - Maintains a `Vec<ChatCompletionRequestMessage>` seeded with the
      `DEFAULT_INSTRUCTIONS` system message.
    - Per turn: pushes the user prompt, records a `checkpoint`, then loops up to
@@ -80,7 +107,7 @@ src/
    - Tool calls run on a per-batch `JoinSet` so `abort_all()` cancels everything
      atomically; `bash` children use `kill_on_drop(true)`, and `fetch` has a 30s
      `reqwest` client timeout.
-5. **`call_fn()`** — the tool dispatcher. Returns `Result<String>`; the Ok value (or
+6. **`call_fn()`** — the tool dispatcher. Returns `Result<String>`; the Ok value (or
    the error's `to_string()`) is sent back as the tool result message.
 
 ### Tool semantics
@@ -153,6 +180,18 @@ src/
    `max_completion_tokens(512)`; change both in `src/main.rs` to target a different
    backend.
 
-3. **`console_subscriber::init()` is always on** — it registers the Tokio console
+3. **`main` is sync; the runtime lives in its own thread** — there is **no
+   `#[tokio::main]`**, and `main` never holds a runtime handle. `main()` is a plain
+   `fn` that runs the ratatui UI directly and spawns two std helper threads: the
+   `crossterm-events` reader and the `agent-runtime` thread, which builds a
+   multi-thread tokio runtime via
+   `tokio::runtime::Builder::new_multi_thread().enable_all().build()` and drives it
+   with a single `runtime.block_on(run_agent(...))` *entirely inside that thread*.
+   The only `block_on` in the program lives in the agent thread, never on a runtime
+   task, so it cannot self-deadlock. If you add async entry points, keep them
+   inside the agent thread's `block_on(...)` and never call `block_on` from within a
+   runtime task.
+
+4. **`console_subscriber::init()` is always on** — it registers the Tokio console
    listener on every run; ignore or point `console-subscriber` at it only when debugging
    the runtime.

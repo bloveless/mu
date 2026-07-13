@@ -42,12 +42,157 @@ struct Args {
     // prompt: String,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Entry point is deliberately **synchronous** and is the host for the whole
+/// program. The layout is three execution contexts, each in its own place:
+///
+///   • `main` thread            → the **ratatui UI** runs here directly.
+///   • "crossterm-events" thread → plain OS thread reading terminal events.
+///   • "agent-runtime" thread    → plain OS thread that **owns the tokio
+///                                 runtime** (built via `Builder` and `block_on`
+///                                 entirely inside that thread) and runs the
+///                                 async agent (`openai_stuff`).
+///
+/// The boundary is one line in the source: *above* the two `thread::spawn`
+/// calls nothing is async and no runtime exists; *inside* the agent thread
+/// everything is. `main` never constructs or drives a tokio runtime — it only
+/// `join`s the agent thread after the UI finishes. There is exactly one
+/// `block_on` in the whole program, and it lives in the agent thread, so the
+/// re-entrant `block_on` deadlock trap cannot apply.
+///
+/// Channels are the only thing that crosses the boundary:
+///   • agent + crossterm → UI is a **std** `mpsc::channel` (the UI blocks on
+///     `recv_timeout`, never `await`).
+///   • UI → agent is a **tokio** `mpsc::unbounded_channel` so the agent can
+///     `select!` over its receiver; its `send` is synchronous, so the sync
+///     UI (on `main`) holds the sender without joining the runtime.
+///
+/// Shutdown is cooperative over the shared `CancellationToken`: when the UI
+/// quits, `main` cancels the token; the agent's `select!` arms fire and the
+/// crossterm reader's poll loop notices within ≤100ms. Dropping the channel
+/// ends (UI moving goes out of scope) is a backup path — `send` returns an
+/// error and both helper threads break out of their loops.
+fn main() -> Result<()> {
     console_subscriber::init();
     color_eyre::install()?;
     let _args = Args::parse();
-    run_app().await
+
+    // ----- shared primitives (no runtime needed to construct) -----
+    let token = CancellationToken::new();
+    let (event_tx, event_rx) = std::sync::mpsc::channel::<AppEvent>();
+    let (ai_tx, ai_rx) = mpsc::unbounded_channel::<AIEvent>();
+
+    // ----- env / client config -----
+    let base_url =
+        env::var("OPENCODE_BASE_URL").unwrap_or_else(|_| "https://opencode.ai/zen/v1".to_string());
+    let api_key = env::var("OPENCODE_API_KEY").unwrap_or_else(|_| {
+        eprintln!("OPENCODE_API_KEY is not set");
+        process::exit(1);
+    });
+    let config = OpenAIConfig::new()
+        .with_api_base(base_url)
+        .with_api_key(api_key);
+
+    // ----------------------------------------------------------------
+    // HELPER THREAD 1 — terminal event reader (plain OS thread).
+    // `event::poll`/`event::read` are blocking calls and must NOT run on an
+    // async task. A plain std thread lets it block freely; it shuts down by
+    // polling the shared cancellation token, or by the channel disconnecting.
+    // ----------------------------------------------------------------
+    let crossterm_handle = {
+        let event_tx = event_tx.clone();
+        let event_token = token.clone();
+        std::thread::Builder::new()
+            .name("crossterm-events".into())
+            .spawn(move || {
+                while !event_token.is_cancelled() {
+                    if let Ok(true) = event::poll(Duration::from_millis(100)) {
+                        match event::read() {
+                            Ok(Event::Key(key)) => {
+                                if key.kind == KeyEventKind::Press
+                                    && event_tx.send(AppEvent::Key(key)).is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Ok(Event::Resize(_, _)) => {
+                                if event_tx.send(AppEvent::Resize).is_err() {
+                                    break;
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(_) => break,
+                        }
+                    }
+                }
+            })?
+    };
+
+    // ----------------------------------------------------------------
+    // HELPER THREAD 2 — the tokio runtime + async agent (plain OS thread).
+    // The runtime is built and `block_on`'d *entirely inside this thread*;
+    // `main` never sees a runtime handle. The agent (`openai_stuff`) is the
+    // sole citizen of the runtime, plus the per-batch tool `JoinSet`s it
+    // spawns. `enable_all()` turns on the time/blocking-pool/signal/IO
+    // drivers the agent relies on; multi-thread gives tool batches real
+    // concurrency with `kill_on_drop` subprocesses.
+    // ----------------------------------------------------------------
+    let agent_handle = {
+        let agent_token = token.clone();
+        let agent_events = event_tx.clone();
+        let build_fatal_events = event_tx.clone();
+        std::thread::Builder::new()
+            .name("agent-runtime".into())
+            .spawn(move || -> Result<()> {
+                let runtime = match tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    // Failed to start the runtime at all — tell the UI so it
+                    // can exit with a useful message rather than hang.
+                    Err(e) => {
+                        let _ = build_fatal_events
+                            .send(AppEvent::Fatal(format!("failed to build runtime: {e}")));
+                        return Err(e.into());
+                    }
+                };
+                // The only `block_on` in the program. It is called from this
+                // dedicated OS thread, never from a runtime task, so it cannot
+                // self-deadlock.
+                runtime.block_on(run_agent(agent_token, config, agent_events, ai_rx))
+            })?
+    };
+
+    // ----------------------------------------------------------------
+    // MAIN THREAD — the ratatui UI runs here directly.
+    // `ratatui::init`/`restore` bracket `App::run` on `main` so raw-mode
+    // setup/teardown happens on the very thread that draws. This is the
+    // program's foreground loop; it returns when the user quits (Ctrl+C / `q`)
+    // or when the agent sends a `Fatal` event (surfaced as an `Err` here).
+    // ----------------------------------------------------------------
+    let mut terminal = ratatui::init();
+    let ui_result = ui::App::new(event_rx, ai_tx).run(&mut terminal);
+    ratatui::restore();
+
+    // The UI has quit. Cancel so the agent's `select!` arms fire and the
+    // crossterm reader winds down, then join both helper threads.
+    token.cancel();
+    match agent_handle.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            // Runtime build failure (already surfaced via `Fatal`) or another
+            // agent init error. Prefer the UI's own error if it has one; the
+            // `Fatal` path already made the UI return `Err`, so in that case
+            // `ui_result` carries the user-facing message.
+            if ui_result.is_ok() {
+                return Err(e);
+            }
+        }
+        Err(_) => eprintln!("agent thread panicked"),
+    }
+    let _ = crossterm_handle.join();
+
+    ui_result
 }
 
 enum AppEvent {
@@ -81,88 +226,38 @@ enum AIEvent {
     UserPrompt(String, CancellationToken),
 }
 
-async fn run_app() -> Result<()> {
-    let mut join_set = JoinSet::new();
-    let token = CancellationToken::new();
-    let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
-    let (ai_tx, ai_rx) = mpsc::unbounded_channel::<AIEvent>();
-
-    let _args = Args::parse();
-
-    let base_url =
-        env::var("OPENCODE_BASE_URL").unwrap_or_else(|_| "https://opencode.ai/zen/v1".to_string());
-
-    let api_key = env::var("OPENCODE_API_KEY").unwrap_or_else(|_| {
-        eprintln!("OPENCODE_API_KEY is not set");
-        process::exit(1);
-    });
-
-    let config = OpenAIConfig::new()
-        .with_api_base(base_url)
-        .with_api_key(api_key);
-
-    let openai_token = token.clone();
-    let openai_events = event_tx.clone();
+/// Runs entirely inside the tokio runtime on the "agent-runtime" thread.
+///
+/// Spawn the agent loop (`openai_stuff`) as the sole root task; when it
+/// returns on cancel or `ai_rx` disconnect, surface any error as a `Fatal`
+/// event to the UI. There is no UI-completion coordination here — `main`
+/// (the UI) is the one that knows when the app is done, and it cancels the
+/// shared token to wind this side down.
+async fn run_agent(
+    token: CancellationToken,
+    config: OpenAIConfig,
+    event_tx: std::sync::mpsc::Sender<AppEvent>,
+    ai_rx: tokio::sync::mpsc::UnboundedReceiver<AIEvent>,
+) -> Result<()> {
+    // Clone for the post-agent `Fatal` send; `event_tx` itself moves into
+    // `openai_stuff` so tool tasks can stream results.
     let fatal_events = event_tx.clone();
-    join_set.spawn(async move {
-        let client = Client::with_config(config);
-        let result = openai_stuff(&openai_token, &client, openai_events, ai_rx).await;
-        if let Err(err) = &result {
-            // The agent is dying; tell the UI so it can exit with a useful
-            // message instead of hanging on the next prompt send.
-            let _ = fatal_events.send(AppEvent::Fatal(format!("{err:?}")));
-        }
-        result
-    });
-
-    // Spawn a blocking task for crossterm events — event::poll and event::read
-    // are blocking calls and must NOT run on an async tokio task.
-    let event_tx = event_tx.clone();
-    let event_token = token.clone();
-    join_set.spawn_blocking(move || {
-        while !event_token.is_cancelled() {
-            if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
-                match event::read() {
-                    Ok(Event::Key(key)) => {
-                        if key.kind == KeyEventKind::Press
-                            && event_tx.send(AppEvent::Key(key)).is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Ok(Event::Resize(_, _)) => {
-                        if event_tx.send(AppEvent::Resize).is_err() {
-                            break;
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(_) => break,
-                }
-            }
-        }
-        Ok(())
-    });
-
-    let mut terminal = ratatui::init();
-    let result = ui::App::new(event_rx, ai_tx).run(&mut terminal).await;
-    token.cancel();
-    if tokio::time::timeout(Duration::from_secs(5), join_set.join_all())
-        .await
-        .is_err()
-    {
-        eprintln!("graceful shutdown timed out");
-    };
-    ratatui::restore();
+    let client = Client::with_config(config);
+    let result = openai_stuff(&token, &client, event_tx, ai_rx).await;
+    if let Err(err) = &result {
+        // The agent is dying; tell the UI so it can exit with a useful
+        // message instead of hanging on the next prompt send.
+        let _ = fatal_events.send(AppEvent::Fatal(format!("{err:?}")));
+    }
     result
 }
 
 async fn openai_stuff<T: Config>(
     token: &CancellationToken,
     client: &Client<T>,
-    tx_events: tokio::sync::mpsc::UnboundedSender<AppEvent>,
+    tx_events: std::sync::mpsc::Sender<AppEvent>,
     mut rx_events: tokio::sync::mpsc::UnboundedReceiver<AIEvent>,
 ) -> Result<()> {
-    // indoc can probably b
     let mut messages: Vec<ChatCompletionRequestMessage> =
         vec![ChatCompletionRequestSystemMessage::from(DEFAULT_INSTRUCTIONS).into()];
 
@@ -412,8 +507,6 @@ async fn openai_stuff<T: Config>(
         // "working…" indicator and re-enable prompt submission.
         let _ = tx_events.send(AppEvent::TurnEnd);
     }
-
-    Ok(())
 }
 
 async fn call_fn(name: &str, args: &str) -> Result<String> {
