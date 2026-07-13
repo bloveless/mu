@@ -6,6 +6,10 @@ When asking for a review focus on code that is idiomatic, correct, and has prope
 
 Always prefer to use the lastest versions of software dependencies. Confirming the latest version with the fetch tool and reading the docs online. You may use the fetch tool to look up the docs online or use any language specific bash tools to read the docs.
 
+## debugging
+
+When debugging if there aren't tests that you can write to reproduce an issue then design some test cases that would exercise the code that you want to debug. Deliver those test cases to the user and use those test cases to further your analysis. If you start guessing about how the code works then design a test case and prove your guess.
+
 # Rules
 
 You've got a few tools available to you but you are very powerful. Use that power wisely and judiciously.
