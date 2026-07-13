@@ -26,6 +26,15 @@ use tokio_util::sync::CancellationToken;
 
 const DEFAULT_INSTRUCTIONS: &str = include_str!("DEFAULT_INSTRUCTIONS.md");
 
+/// Identifies this bot to HTTP services (e.g. crates.io) that require a
+/// meaningful `User-Agent` rather than the bare reqwest default.
+const HTTP_USER_AGENT: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    "/",
+    env!("CARGO_PKG_VERSION"),
+    " (https://github.com/bloveless/mu)"
+);
+
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
@@ -207,19 +216,35 @@ async fn openai_stuff<T: Config>(
                         }),
                         ChatCompletionTools::Function(ChatCompletionTool {
                             function: FunctionObjectArgs::default()
-                                .name("write")
-                                .description("Write content to a file")
+                                .name("edit")
+                                .description(
+                                    "Edit a file with an exact string replacement. \
+                                     Provide `old_string` (the exact text to find in the \
+                                     file) and `new_string` (the replacement). `old_string` \
+                                     must match the file exactly, including whitespace and \
+                                     indentation, and must be UNIQUE within the file — if it \
+                                     occurs more than once, include more surrounding context \
+                                     to make it unique. To CREATE a new file, pass an empty \
+                                     `old_string` together with the full file contents as \
+                                     `new_string`; this is refused if the file already exists. \
+                                     Always read the current file contents before editing it \
+                                     so `old_string` matches exactly.",
+                                )
                                 .parameters(json!({
                                     "type": "object",
-                                    "required": ["file_path", "content"],
+                                    "required": ["file_path", "old_string", "new_string"],
                                     "properties": {
                                         "file_path": {
-                                        "type": "string",
-                                        "description": "The path of the file to write to"
+                                            "type": "string",
+                                            "description": "The path of the file to edit"
                                         },
-                                        "content": {
-                                        "type": "string",
-                                        "description": "The content to write to the file"
+                                        "old_string": {
+                                            "type": "string",
+                                            "description": "The exact text to find in the file. Must be unique within the file unless it is empty, in which case the file is created with `new_string` as its contents (and must not already exist)."
+                                        },
+                                        "new_string": {
+                                            "type": "string",
+                                            "description": "The text to replace `old_string` with. When `old_string` is empty, this is the full contents of the new file."
                                         }
                                     }
                                 }))
@@ -403,15 +428,59 @@ async fn call_fn(name: &str, args: &str) -> Result<String> {
             let content = fs::read_to_string(file_path).await?;
             Ok(content)
         }
-        "write" => {
+        "edit" => {
             let file_path = arguments["file_path"]
                 .as_str()
-                .ok_or_else(|| eyre!("tool 'write' requires a string field 'file_path'"))?;
-            let content = arguments["content"]
+                .ok_or_else(|| eyre!("tool 'edit' requires a string field 'file_path'"))?;
+            let old_string = arguments["old_string"]
                 .as_str()
-                .ok_or_else(|| eyre!("tool 'write' requires a string field 'content'"))?;
-            fs::write(file_path, content).await?;
-            Ok(content.to_string())
+                .ok_or_else(|| eyre!("tool 'edit' requires a string field 'old_string'"))?;
+            let new_string = arguments["new_string"]
+                .as_str()
+                .ok_or_else(|| eyre!("tool 'edit' requires a string field 'new_string'"))?;
+
+            if old_string.is_empty() {
+                // Create-a-new-file path. An empty `old_string` is the 
+                // convention for "this file doesn't exist yet"; refuse to 
+                // clobber an existing file so the model can't accidentally 
+                // blank out content it meant to edit.
+                if fs::try_exists(file_path).await? {
+                    bail!(
+                        "tool 'edit' cannot create '{file_path}': file already \
+                         exists. To edit it, provide a non-empty, unique \
+                         `old_string` that matches the current contents \
+                         exactly."
+                    );
+                }
+                // Create parent directories so a new file can be added in a 
+                // new subdirectory in a single step, mirroring `write`.
+                if let Some(parent) = std::path::Path::new(file_path).parent()
+                    && !parent.as_os_str().is_empty() {
+                        fs::create_dir_all(parent).await?;
+                    }
+                fs::write(file_path, new_string).await?;
+                Ok(format!("Created {file_path}"))
+            } else {
+                let content = fs::read_to_string(file_path).await?;
+                match content.matches(old_string).count() {
+                    0 => bail!(
+                        "tool 'edit': `old_string` was not found in \
+                         '{file_path}'. Make sure it matches the file \
+                         exactly, including whitespace and indentation."
+                    ),
+                    1 => {
+                        let updated = content.replacen(old_string, new_string, 1);
+                        fs::write(file_path, updated).await?;
+                        Ok(format!("Edited {file_path}"))
+                    }
+                    n => bail!(
+                        "tool 'edit': `old_string` appears {n} times in \
+                         '{file_path}'; it must be unique. Include more \
+                         surrounding context so it matches exactly one \
+                         location."
+                    ),
+                }
+            }
         }
         "bash" => {
             let command = arguments["command"]
@@ -441,6 +510,7 @@ async fn call_fn(name: &str, args: &str) -> Result<String> {
             // Esc / shutdown) also cancels the request cleanly.
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
+                .user_agent(HTTP_USER_AGENT)
                 .build()?;
             let response = client.get(url).send().await?;
             response.text().await.map_err(Into::into)
