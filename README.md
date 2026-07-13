@@ -1,38 +1,34 @@
-[![progress-banner](https://backend.codecrafters.io/progress/claude-code/ce0763b0-7271-44a0-a838-527ebb5567b2)](https://app.codecrafters.io/users/bloveless?r=2qF)
+# mu
 
-This is a starting point for Rust solutions to the
-["Build Your own Claude Code" Challenge](https://codecrafters.io/challenges/claude-code).
+`mu` is a terminal AI coding assistant (a "Claude Code" clone) written in Rust.
+It drives an OpenAI-compatible chat-completion agent loop — file reading,
+str_replace-style editing, bash execution, and HTTP fetch — and renders an
+interactive TUI built with `ratatui` + `tui-scrollview`.
 
-Claude Code is an AI coding assistant that uses Large Language Models (LLMs) to
-understand code and perform actions through tool calls. In this challenge,
-you'll build your own Claude Code from scratch by implementing an LLM-powered
-coding assistant.
+## Requirements
 
-Along the way you'll learn about HTTP RESTful APIs, OpenAI-compatible tool
-calling, agent loop, and how to integrate multiple tools into an AI assistant.
+- Rust 1.96+ (toolchain pinned in `Cargo.toml` `rust-version`)
+- `OPENCODE_API_KEY` — required, the API key for the OpenAI-compatible endpoint
+- `OPENCODE_BASE_URL` — optional, defaults to `https://opencode.ai/zen/v1`
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
-
-# Passing the first stage
-
-The entry point for your `claude-code` implementation is in `src/main.rs`. Study
-and uncomment the relevant code, and submit to pass the first stage:
+## Running
 
 ```sh
-codecrafters submit
+cargo run --release
 ```
 
-# Stage 2 & beyond
+The release binary is `target/release/mu`.
 
-Note: This section is for stages 2 and beyond.
+## Tools
 
-1. Ensure you have `cargo (1.96)` installed locally.
-2. Run `./your_program.sh` to run your program, which is implemented in
-   `src/main.rs`. This command compiles your Rust project, so it might be slow
-   the first time you run it. Subsequent runs will be fast.
-3. Run `codecrafters submit` to submit your solution to CodeCrafters. Test
-   output will be streamed to your terminal.
+The agent advertises four tools to the model:
+
+| Tool  | Description |
+|-------|-------------|
+| `read`  | Read a file's contents |
+| `edit`  | Exact, unique string replacement. An empty `old_string` creates a new file with `new_string` (refused if the file already exists); otherwise `old_string` must occur exactly once and is replaced by `new_string` |
+| `bash`  | Execute a shell command (`kill_on_drop`, cancelled by Esc) |
+| `fetch` | HTTP GET with a 30s timeout |
 
 # Suggested Features
 
