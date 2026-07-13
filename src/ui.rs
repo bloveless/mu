@@ -13,7 +13,7 @@
 //! the wrapping cost.  The total rendered height and the input-area height
 //! are also cached to avoid re-measuring on every frame.
 
-use color_eyre::{Result, eyre::eyre};
+use color_eyre::{eyre::eyre, Result};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Layout, Rect, Size};
 use ratatui::style::Style;
@@ -287,6 +287,7 @@ impl App {
             AppEvent::AssistantResponse(response) if !response.is_empty() => {
                 self.history
                     .push(HistoryItem::AssistantResponse(WrappedItem::new(response)));
+                self.cached_total_height_width = None;
                 self.scroll_view_dirty = true;
                 self.scroll_to_bottom_if_following();
                 Ok(false)
@@ -294,6 +295,7 @@ impl App {
             AppEvent::Error(error) if !error.is_empty() => {
                 self.history
                     .push(HistoryItem::SystemError(WrappedItem::new(error)));
+                self.cached_total_height_width = None;
                 self.scroll_view_dirty = true;
                 self.scroll_to_bottom_if_following();
                 Ok(false)
@@ -303,6 +305,7 @@ impl App {
                     name,
                     args: WrappedItem::new(args),
                 });
+                self.cached_total_height_width = None;
                 self.scroll_view_dirty = true;
                 self.scroll_to_bottom_if_following();
                 Ok(false)
@@ -317,6 +320,7 @@ impl App {
                     output: WrappedItem::new(output),
                     success,
                 });
+                self.cached_total_height_width = None;
                 self.scroll_view_dirty = true;
                 self.scroll_to_bottom_if_following();
                 Ok(false)
@@ -474,6 +478,7 @@ impl App {
 
         self.history
             .push(HistoryItem::UserPrompt(WrappedItem::new(prompt)));
+        self.cached_total_height_width = None;
         self.scroll_view_dirty = true;
         self.scroll_to_bottom_if_following();
         Ok(false)
