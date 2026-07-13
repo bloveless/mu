@@ -13,9 +13,9 @@
 //! the wrapping cost.  The total rendered height and the input-area height
 //! are also cached to avoid re-measuring on every frame.
 
-use color_eyre::{eyre::eyre, Result};
+use color_eyre::{Result, eyre::eyre};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Constraint, Layout, Rect, Size};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect, Size};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
@@ -536,7 +536,11 @@ impl App {
         };
 
         frame.render_widget(
-            Block::default().border_style(style).borders(Borders::TOP),
+            Block::default()
+                .title(" μ ")
+                .title_alignment(Alignment::Center)
+                .border_style(style)
+                .borders(Borders::TOP),
             top_bar,
         );
 
