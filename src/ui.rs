@@ -13,7 +13,7 @@
 //! the wrapping cost.  The total rendered height and the input-area height
 //! are also cached to avoid re-measuring on every frame.
 
-use color_eyre::{eyre::eyre, Result};
+use color_eyre::{Result, eyre::eyre};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Layout, Rect, Size};
 use ratatui::style::Style;
@@ -376,12 +376,14 @@ impl App {
                     self.cached_input_height_width = 0; // invalidate cache
                     Ok(false)
                 }
-                // Enter submits the prompt.
+                // Enter submits the prompt (only when idle with input).
                 (KeyCode::Enter, KeyModifiers::NONE) if !self.input.is_empty() && !self.working => {
                     self.submit_prompt()
                 }
-                // Shift+Enter inserts a newline.
-                (KeyCode::Enter, KeyModifiers::SHIFT) => {
+                // Supporting both alt+enter and shift+enter since alt+enter is
+                // more compatible with different terminals that suppor the Kitty
+                // keyboard protocol.
+                (KeyCode::Enter, m) if m == KeyModifiers::ALT || m == KeyModifiers::SHIFT => {
                     self.input.insert(self.cursor, '\n');
                     self.cursor += '\n'.len_utf8();
                     self.cached_input_height_width = 0;
