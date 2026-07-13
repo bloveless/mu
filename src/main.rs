@@ -388,9 +388,14 @@ async fn openai_stuff<T: Config>(
                 // must outlive the `select!` polling.
                 let chat = client.chat();
                 let response = tokio::select! {
-                    r = chat.create(request) => r?,
+                    r = chat.create(request) => r,
                     _ = token.cancelled() => break 'turn,
                     _ = turn_token.cancelled() => break 'turn,
+                };
+
+                let response = match response {
+                    Ok(r) => r,
+                    Err(e) => return Err(e.into()),
                 };
 
                 let Some(choice) = response.choices.first() else {
@@ -607,7 +612,66 @@ async fn call_fn(name: &str, args: &str) -> Result<String> {
                 .user_agent(HTTP_USER_AGENT)
                 .build()?;
             let response = client.get(url).send().await?;
-            response.text().await.map_err(Into::into)
+            
+            // Surface HTTP errors (4xx, 5xx) as tool failures so the agent
+            // and user know the fetch didn't succeed.
+            let status = response.status();
+            if !status.is_success() {
+                let status_code = status.as_u16();
+                let status_text = status.canonical_reason().unwrap_or("Unknown");
+                let body = response.text().await.unwrap_or_default();
+                let error_msg = if body.is_empty() {
+                    format!(
+                        "fetch failed: HTTP {status_code} {status_text} for {url}"
+                    )
+                } else {
+                    // Include a snippet of the error response body (up to 500 chars)
+                    // so the agent/user can see what the server said.
+                    let snippet = if body.len() > 500 {
+                        format!("{}...", &body[..500])
+                    } else {
+                        body
+                    };
+                    format!(
+                        "fetch failed: HTTP {status_code} {status_text} for {url}\n\nResponse: {snippet}"
+                    )
+                };
+                bail!(error_msg);
+            }
+            
+            let html = response.text().await?;
+
+            // Extract the main article content and convert to markdown so the
+            // agent gets readable text instead of raw HTML (which bloats the
+            // context window with scripts, styles, navigation, etc.).
+            let options = readabilityrs::ReadabilityOptions::builder()
+                .output_markdown(true)
+                .build();
+            match readabilityrs::Readability::new(&html, Some(url), Some(options)) {
+                Ok(readability) => {
+                    if let Some(article) = readability.parse() {
+                        let mut output = String::new();
+                        if let Some(title) = &article.title {
+                            output.push_str(&format!("# {title}\n\n"));
+                        }
+                        if let Some(markdown) = &article.markdown_content {
+                            output.push_str(markdown);
+                        } else if let Some(text) = &article.text_content {
+                            output.push_str(text);
+                        } else {
+                            // Readability found nothing useful; fall back to raw
+                            // HTML so the agent at least gets something.
+                            output.push_str(&html);
+                        }
+                        Ok(output)
+                    } else {
+                        // Readability couldn't extract an article (e.g. not an
+                        // article page). Fall back to raw HTML.
+                        Ok(html)
+                    }
+                }
+                Err(_) => Ok(html),
+            }
         }
         _ => Err(eyre!("attempted to call unknown tool '{name}'")),
     }
