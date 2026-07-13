@@ -40,6 +40,19 @@ fn wrap_single_line(line: &str, width: usize, out: &mut Vec<String>) {
     let mut current_width = 0usize;
 
     for word in line.split(' ') {
+        // `split(' ')` yields an empty string for every leading, trailing,
+        // or consecutive space.  Treat each one as a literal space character
+        // so that indentation and intra-line spacing are preserved.
+        if word.is_empty() {
+            if current_width + 1 > width && !current.is_empty() {
+                out.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            current.push(' ');
+            current_width += 1;
+            continue;
+        }
+
         let word_width = UnicodeWidthStr::width(word);
 
         // A single word longer than the whole line width has to be
@@ -53,14 +66,17 @@ fn wrap_single_line(line: &str, width: usize, out: &mut Vec<String>) {
             continue;
         }
 
-        let sep_width = if current.is_empty() { 0 } else { 1 };
+        // Add separator space if current is not empty and doesn't already end with a space
+        let needs_separator = !current.is_empty() && !current.ends_with(' ');
+        let sep_width = if needs_separator { 1 } else { 0 };
+
         if current_width + sep_width + word_width > width {
             out.push(std::mem::take(&mut current));
             current_width = 0;
             current.push_str(word);
-            current_width += word_width;
+            current_width = word_width;
         } else {
-            if !current.is_empty() {
+            if needs_separator {
                 current.push(' ');
                 current_width += 1;
             }
