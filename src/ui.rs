@@ -381,7 +381,7 @@ impl App {
                     self.submit_prompt()
                 }
                 // Supporting both alt+enter and shift+enter since alt+enter is
-                // more compatible with different terminals that suppor the Kitty
+                // more compatible with different terminals that support the Kitty
                 // keyboard protocol.
                 (KeyCode::Enter, m) if m == KeyModifiers::ALT || m == KeyModifiers::SHIFT => {
                     self.input.insert(self.cursor, '\n');
