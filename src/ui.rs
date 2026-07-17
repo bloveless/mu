@@ -13,7 +13,7 @@
 //! the wrapping cost.  The total rendered height and the input-area height
 //! are also cached to avoid re-measuring on every frame.
 
-use color_eyre::{Result, eyre::eyre};
+use color_eyre::{eyre::eyre, Result};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Layout, Rect, Size};
 use ratatui::style::Style;

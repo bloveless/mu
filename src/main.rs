@@ -1,6 +1,12 @@
+// Feature-gated frontend modules
+#[cfg(feature = "tui")]
 mod theme;
+#[cfg(feature = "tui")]
 mod ui;
+#[cfg(feature = "tui")]
 mod wrap;
+#[cfg(feature = "json")]
+mod json_frontend;
 
 use std::{env, process, time::Duration};
 
@@ -19,10 +25,12 @@ use color_eyre::{
     Result,
     eyre::{bail, eyre},
 };
-use crossterm::event::{self, Event, KeyEventKind};
 use serde_json::json;
 use tokio::{fs, process::Command, sync::mpsc, task::JoinSet};
 use tokio_util::sync::CancellationToken;
+
+#[cfg(feature = "tui")]
+use crossterm::event::{self, Event, KeyEventKind};
 
 const DEFAULT_INSTRUCTIONS: &str = include_str!("DEFAULT_INSTRUCTIONS.md");
 
@@ -38,44 +46,42 @@ const HTTP_USER_AGENT: &str = concat!(
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
-    // #[arg(short = 'p', long)]
-    // prompt: String,
+    /// Run in JSON-RPC server mode instead of TUI mode.
+    #[arg(long)]
+    json: bool,
+
+    /// Port for the JSON-RPC server (default: 3000).
+    #[arg(long, default_value = "3000")]
+    port: u16,
 }
 
 /// Entry point is deliberately **synchronous** and is the host for the whole
-/// program. The layout is three execution contexts, each in its own place:
+/// program.
+///
+/// ## TUI mode (default)
+///
+/// Layout is three execution contexts, each in its own place:
 ///
 ///   • `main` thread            → the **ratatui UI** runs here directly.
 ///   • "crossterm-events" thread → plain OS thread reading terminal events.
 ///   • "agent-runtime" thread    → plain OS thread that **owns the tokio
-///                                 runtime** (built via `Builder` and `block_on`
-///                                 entirely inside that thread) and runs the
-///                                 async agent (`openai_stuff`).
+///                                 runtime** (built via `Builder` and
+///                                 `block_on` entirely inside that thread)
+///                                 and runs the async agent (`openai_stuff`).
 ///
-/// The boundary is one line in the source: *above* the two `thread::spawn`
-/// calls nothing is async and no runtime exists; *inside* the agent thread
-/// everything is. `main` never constructs or drives a tokio runtime — it only
-/// `join`s the agent thread after the UI finishes. There is exactly one
-/// `block_on` in the whole program, and it lives in the agent thread, so the
-/// re-entrant `block_on` deadlock trap cannot apply.
+/// ## JSON mode (`--json`)
 ///
-/// Channels are the only thing that crosses the boundary:
-///   • agent + crossterm → UI is a **std** `mpsc::channel` (the UI blocks on
-///     `recv_timeout`, never `await`).
-///   • UI → agent is a **tokio** `mpsc::unbounded_channel` so the agent can
-///     `select!` over its receiver; its `send` is synchronous, so the sync
-///     UI (on `main`) holds the sender without joining the runtime.
+///   • "event-collector" thread  → drains events into the store.
+///   • "json-rpc-server" thread  → owns a **single-thread** tokio runtime
+///                                 and runs the axum HTTP server.
+///   • "agent-runtime" thread    → same as TUI mode.
 ///
-/// Shutdown is cooperative over the shared `CancellationToken`: when the UI
-/// quits, `main` cancels the token; the agent's `select!` arms fire and the
-/// crossterm reader's poll loop notices within ≤100ms. Dropping the channel
-/// ends (UI moving goes out of scope) is a backup path — `send` returns an
-/// error and both helper threads break out of their loops.
+/// Shutdown is cooperative over the shared `CancellationToken`.
 fn main() -> Result<()> {
     #[cfg(feature = "console")]
     console_subscriber::init();
     color_eyre::install()?;
-    let _args = Args::parse();
+    let args = Args::parse();
 
     // ----- shared primitives (no runtime needed to construct) -----
     let token = CancellationToken::new();
@@ -94,42 +100,7 @@ fn main() -> Result<()> {
         .with_api_key(api_key);
 
     // ----------------------------------------------------------------
-    // HELPER THREAD 1 — terminal event reader (plain OS thread).
-    // `event::poll`/`event::read` are blocking calls and must NOT run on an
-    // async task. A plain std thread lets it block freely; it shuts down by
-    // polling the shared cancellation token, or by the channel disconnecting.
-    // ----------------------------------------------------------------
-    let crossterm_handle = {
-        let event_tx = event_tx.clone();
-        let event_token = token.clone();
-        std::thread::Builder::new()
-            .name("crossterm-events".into())
-            .spawn(move || {
-                while !event_token.is_cancelled() {
-                    if let Ok(true) = event::poll(Duration::from_millis(100)) {
-                        match event::read() {
-                            Ok(Event::Key(key)) => {
-                                if key.kind == KeyEventKind::Press
-                                    && event_tx.send(AppEvent::Key(key)).is_err()
-                                {
-                                    break;
-                                }
-                            }
-                            Ok(Event::Resize(_, _)) => {
-                                if event_tx.send(AppEvent::Resize).is_err() {
-                                    break;
-                                }
-                            }
-                            Ok(_) => {}
-                            Err(_) => break,
-                        }
-                    }
-                }
-            })?
-    };
-
-    // ----------------------------------------------------------------
-    // HELPER THREAD 2 — the tokio runtime + async agent (plain OS thread).
+    // HELPER THREAD — the tokio runtime + async agent (plain OS thread).
     // The runtime is built and `block_on`'d *entirely inside this thread*;
     // `main` never sees a runtime handle. The agent (`openai_stuff`) is the
     // sole citizen of the runtime, plus the per-batch tool `JoinSet`s it
@@ -149,7 +120,7 @@ fn main() -> Result<()> {
                     .build()
                 {
                     Ok(rt) => rt,
-                    // Failed to start the runtime at all — tell the UI so it
+                    // Failed to start the runtime at all — tell the frontend so it
                     // can exit with a useful message rather than hang.
                     Err(e) => {
                         let _ = build_fatal_events
@@ -165,39 +136,104 @@ fn main() -> Result<()> {
     };
 
     // ----------------------------------------------------------------
-    // MAIN THREAD — the ratatui UI runs here directly.
-    // `ratatui::init`/`restore` bracket `App::run` on `main` so raw-mode
-    // setup/teardown happens on the very thread that draws. This is the
-    // program's foreground loop; it returns when the user quits (Ctrl+C / `q`)
-    // or when the agent sends a `Fatal` event (surfaced as an `Err` here).
+    // FRONTEND DISPATCH
     // ----------------------------------------------------------------
-    let mut terminal = ratatui::init();
-    let ui_result = ui::App::new(event_rx, ai_tx).run(&mut terminal);
-    ratatui::restore();
+    let mut event_rx = Some(event_rx);
 
-    // The UI has quit. Cancel so the agent's `select!` arms fire and the
-    // crossterm reader winds down, then join both helper threads.
-    token.cancel();
-    match agent_handle.join() {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            // Runtime build failure (already surfaced via `Fatal`) or another
-            // agent init error. Prefer the UI's own error if it has one; the
-            // `Fatal` path already made the UI return `Err`, so in that case
-            // `ui_result` carries the user-facing message.
-            if ui_result.is_ok() {
-                return Err(e);
-            }
+    #[cfg(feature = "json")]
+    if args.json || cfg!(not(feature = "tui")) {
+        if let Some(rx) = event_rx.take() {
+            let result =
+                json_frontend::run_json_frontend(rx, ai_tx, token.clone(), args.port);
+            token.cancel();
+            let _ = agent_handle.join();
+            return result;
         }
-        Err(_) => eprintln!("agent thread panicked"),
+        unreachable!("event_rx was just created and must be Some")
     }
-    let _ = crossterm_handle.join();
 
-    ui_result
+    #[cfg(feature = "tui")]
+    {
+        // ----------------------------------------------------------------
+        // HELPER THREAD — terminal event reader (plain OS thread, TUI only).
+        // `event::poll`/`event::read` are blocking calls and must NOT run on
+        // an async task. A plain std thread lets it block freely; it shuts
+        // down by polling the shared cancellation token, or by the channel
+        // disconnecting.
+        // ----------------------------------------------------------------
+        let crossterm_handle = {
+            let event_tx = event_tx.clone();
+            let event_token = token.clone();
+            std::thread::Builder::new()
+                .name("crossterm-events".into())
+                .spawn(move || {
+                    while !event_token.is_cancelled() {
+                        if let Ok(true) = event::poll(Duration::from_millis(100)) {
+                            match event::read() {
+                                Ok(Event::Key(key)) => {
+                                    if key.kind == KeyEventKind::Press
+                                        && event_tx.send(AppEvent::Key(key)).is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Resize(_, _)) => {
+                                    if event_tx.send(AppEvent::Resize).is_err() {
+                                        break;
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                })?
+        };
+
+        // ----------------------------------------------------------------
+        // MAIN THREAD — the ratatui UI runs here directly.
+        // ----------------------------------------------------------------
+        let mut terminal = ratatui::init();
+        let ui_result = match event_rx.take() {
+            Some(rx) => ui::App::new(rx, ai_tx).run(&mut terminal),
+            None => {
+                ratatui::restore();
+                panic!("event_rx already consumed");
+            }
+        };
+        ratatui::restore();
+
+        // The UI has quit. Cancel so the agent's `select!` arms fire and the
+        // crossterm reader winds down, then join both helper threads.
+        token.cancel();
+        match agent_handle.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                if ui_result.is_ok() {
+                    return Err(e);
+                }
+            }
+            Err(_) => eprintln!("agent thread panicked"),
+        }
+        let _ = crossterm_handle.join();
+
+        return ui_result;
+    }
+
+    // If neither feature is enabled this is a compile error.
+    #[cfg(not(any(feature = "tui", feature = "json")))]
+    compile_error!("At least one of the 'tui' or 'json' features must be enabled");
+
+    #[allow(unreachable_code)]
+    Ok(())
 }
 
 enum AppEvent {
+    /// Terminal key press (TUI only; never produced in JSON mode).
+    #[cfg(feature = "tui")]
     Key(crossterm::event::KeyEvent),
+    /// Terminal resize (TUI only).
+    #[cfg(feature = "tui")]
     Resize,
     AssistantResponse(String),
     Error(String),
