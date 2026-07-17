@@ -72,6 +72,7 @@ struct Args {
 /// ends (UI moving goes out of scope) is a backup path — `send` returns an
 /// error and both helper threads break out of their loops.
 fn main() -> Result<()> {
+    #[cfg(feature = "console")]
     console_subscriber::init();
     color_eyre::install()?;
     let _args = Args::parse();

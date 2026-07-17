@@ -5,6 +5,12 @@ It drives an OpenAI-compatible chat-completion agent loop — file reading,
 str_replace-style editing, bash execution, and HTTP fetch — and renders an
 interactive TUI built with `ratatui` + `tui-scrollview`.
 
+## TODO
+
+Create a json interface so that LLMs can run this without having to deal with the ratatui TUI.
+Start up a json server and allow posting messages to it and receiving the events/writing the
+events to a log.
+
 ## Requirements
 
 - Rust 1.96+ (toolchain pinned in `Cargo.toml` `rust-version`)
