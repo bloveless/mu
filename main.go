@@ -81,6 +81,7 @@ func run(verbose bool) error {
 		if userMessage == "" {
 			continue
 		}
+		logging.Log("\n")
 		messages = append(messages, api.NewUserMessage(userMessage))
 
 		for i := range MaxIterationsPerUserMessage {
@@ -89,12 +90,16 @@ func run(verbose bool) error {
 				return fmt.Errorf("running streaming iteration: %w", err)
 			}
 			messages = append(messages, res.assistantMessage)
+			if !res.endedWithNewline {
+				logging.Log("\n")
+			}
+			logging.Log("\n")
 			if len(res.toolCalls) == 0 {
 				break // the model is done with this user message
 			}
-			logging.Log("\n")
 			for _, tc := range res.toolCalls {
 				messages = append(messages, tools.ExecTool(ctx, tc))
+				logging.Log("\n")
 			}
 		}
 	}
@@ -103,6 +108,7 @@ func run(verbose bool) error {
 type iterationResult struct {
 	assistantMessage api.Message
 	toolCalls        []api.ToolCall
+	endedWithNewline bool // whether the rendered stream output ended with a newline
 }
 
 // streamIteration executes one turn of the agent loop: it streams a single chat
@@ -131,6 +137,7 @@ func streamIteration(
 	defer stream.Close() //nolint:errcheck // nothing useful to do with a close error here
 	var agentResponse strings.Builder
 	wasThinking := true
+	endedWithNewline := true // nothing printed yet, so no line needs terminating
 	var finishReason string
 	for {
 		resp, err := stream.Recv()
@@ -149,14 +156,19 @@ func streamIteration(
 		if len(delta.ReasoningContent) > 0 {
 			logging.ThinkingLog("%s", delta.ReasoningContent)
 			wasThinking = true
+			endedWithNewline = strings.HasSuffix(delta.ReasoningContent, "\n")
 		}
 		if len(delta.Content) > 0 {
 			if wasThinking {
+				if !endedWithNewline {
+					logging.Log("\n")
+				}
 				logging.Log("\n")
 				wasThinking = false
 			}
 			logging.AssistantLog("%s", delta.Content)
 			agentResponse.WriteString(delta.Content)
+			endedWithNewline = strings.HasSuffix(delta.Content, "\n")
 		}
 		if resp.Choices[0].FinishReason != "" {
 			finishReason = resp.Choices[0].FinishReason
@@ -176,7 +188,8 @@ func streamIteration(
 			Content:   agentResponse.String(),
 			ToolCalls: calls,
 		},
-		toolCalls: calls,
+		toolCalls:        calls,
+		endedWithNewline: endedWithNewline,
 	}, nil
 }
 
