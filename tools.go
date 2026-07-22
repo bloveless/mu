@@ -62,7 +62,25 @@ func (tools Tools) ExecTool(ctx context.Context, tc api.ToolCall) api.Message {
 			),
 		)
 	}
-	return tool.Exec(ctx, tc)
+	result := tool.Exec(ctx, tc)
+	logging.ToolResultLog("%s\n", truncateLines(result.Content, 5))
+	return result
+}
+
+// truncateLines returns s unchanged when it has maxLines or fewer lines;
+// otherwise it returns a "… (N more lines)" indicator followed by the last
+// maxLines lines.
+func truncateLines(s string, maxLines int) string {
+	s = strings.TrimRight(s, "\n")
+	if s == "" {
+		return "(no output)"
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= maxLines {
+		return s
+	}
+	hidden := len(lines) - maxLines
+	return fmt.Sprintf("… (%d more lines)\n%s", hidden, strings.Join(lines[hidden:], "\n"))
 }
 
 func ReadTool() *Tool {

@@ -7,14 +7,15 @@ import (
 
 // Define ANSI color codes
 const (
-	reset  = "\033[0m"
-	red    = "\033[31m"
-	green  = "\033[32m"
-	yellow = "\033[33m"
-	blue   = "\033[34m"
-	purple = "\033[35m"
-	cyan   = "\033[36m"
-	white  = "\033[37m"
+	reset     = "\033[0m"
+	red       = "\033[31m"
+	green     = "\033[32m"
+	yellow    = "\033[33m"
+	blue      = "\033[34m"
+	purple    = "\033[35m"
+	cyan      = "\033[36m"
+	white     = "\033[37m"
+	lightGrey = "\033[90m"
 )
 
 var verbose bool
@@ -37,6 +38,10 @@ func AssistantLog(msg string, args ...any) {
 
 func ToolLog(msg string, args ...any) {
 	fmt.Printf(cyan+msg+reset, args...)
+}
+
+func ToolResultLog(msg string, args ...any) {
+	fmt.Printf(lightGrey+msg+reset, args...)
 }
 
 func Error(msg string, args ...any) {
