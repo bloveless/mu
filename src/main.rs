@@ -1,25 +1,17 @@
 // Feature-gated frontend modules
+mod api;
+#[cfg(feature = "json")]
+mod json_frontend;
 #[cfg(feature = "tui")]
 mod theme;
 #[cfg(feature = "tui")]
 mod ui;
 #[cfg(feature = "tui")]
 mod wrap;
-#[cfg(feature = "json")]
-mod json_frontend;
 
 use std::{env, process, time::Duration};
 
-use async_openai::{
-    Client,
-    config::{Config, OpenAIConfig},
-    types::chat::{
-        ChatCompletionMessageToolCalls, ChatCompletionRequestAssistantMessageArgs,
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
-        ChatCompletionRequestToolMessage, ChatCompletionRequestUserMessage, ChatCompletionTool,
-        ChatCompletionTools, CreateChatCompletionRequestArgs, FinishReason, FunctionObjectArgs,
-    },
-};
+use async_openai::types::chat::ChatCompletionRequestSystemMessage;
 use clap::Parser;
 use color_eyre::{
     Result,
@@ -81,7 +73,7 @@ fn main() -> Result<()> {
     #[cfg(feature = "console")]
     console_subscriber::init();
     color_eyre::install()?;
-    let args = Args::parse();
+    let _args = Args::parse();
 
     // ----- shared primitives (no runtime needed to construct) -----
     let token = CancellationToken::new();
@@ -143,8 +135,7 @@ fn main() -> Result<()> {
     #[cfg(feature = "json")]
     if args.json || cfg!(not(feature = "tui")) {
         if let Some(rx) = event_rx.take() {
-            let result =
-                json_frontend::run_json_frontend(rx, ai_tx, token.clone(), args.port);
+            let result = json_frontend::run_json_frontend(rx, ai_tx, token.clone(), args.port);
             token.cancel();
             let _ = agent_handle.join();
             return result;
@@ -649,7 +640,7 @@ async fn call_fn(name: &str, args: &str) -> Result<String> {
                 .user_agent(HTTP_USER_AGENT)
                 .build()?;
             let response = client.get(url).send().await?;
-            
+
             // Surface HTTP errors (4xx, 5xx) as tool failures so the agent
             // and user know the fetch didn't succeed.
             let status = response.status();
@@ -658,9 +649,7 @@ async fn call_fn(name: &str, args: &str) -> Result<String> {
                 let status_text = status.canonical_reason().unwrap_or("Unknown");
                 let body = response.text().await.unwrap_or_default();
                 let error_msg = if body.is_empty() {
-                    format!(
-                        "fetch failed: HTTP {status_code} {status_text} for {url}"
-                    )
+                    format!("fetch failed: HTTP {status_code} {status_text} for {url}")
                 } else {
                     // Include a snippet of the error response body (up to 500 chars)
                     // so the agent/user can see what the server said.
@@ -675,7 +664,7 @@ async fn call_fn(name: &str, args: &str) -> Result<String> {
                 };
                 bail!(error_msg);
             }
-            
+
             let html = response.text().await?;
 
             // Extract the main article content and convert to markdown so the
