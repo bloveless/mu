@@ -138,7 +138,7 @@ func (c Client) ChatCompletionStream(ctx context.Context, req ChatCompletionRequ
 		return ChatStream{}, fmt.Errorf("creating request with context: %w", err)
 	}
 	if c.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer: "+c.apiKey)
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 	httpReq.Header.Set("User-Agent", "mu2/0.1.0")
 	httpReq.Header.Set("Content-Type", "application/json")

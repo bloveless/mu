@@ -26,7 +26,7 @@ func SetVerbose(v bool) {
 
 // Log prints user facing messages to stdout
 func Log(msg string, args ...any) {
-	fmt.Printf(msg, args...)
+	fmt.Printf(blue+msg+reset, args...)
 }
 
 // ThinkingLog prints assistant thinking logs to stdout
@@ -34,9 +34,10 @@ func ThinkingLog(msg string, args ...any) {
 	fmt.Printf(yellow+msg+reset, args...)
 }
 
-// AssistantLog prints assistant responses to stdout
+// AssistantLog prints assistant responses to stdout. Assistant log writes in the default color of the terminal to draw
+// attention to it.
 func AssistantLog(msg string, args ...any) {
-	fmt.Printf(blue+msg+reset, args...)
+	fmt.Printf(msg, args...)
 }
 
 // ToolLog prints tool log formatted messages to stdout

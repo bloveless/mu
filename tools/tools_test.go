@@ -1,4 +1,4 @@
-package main
+package tools
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 func bashCall(t *testing.T, args string) api.Message {
 	t.Helper()
-	tool := BashTool()
+	tool := Bash()
 	return tool.Exec(context.Background(), api.ToolCall{
 		ID: "test-call",
 		Function: api.FunctionCall{

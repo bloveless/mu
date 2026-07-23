@@ -1,10 +1,11 @@
-package main
+package tools
 
 import (
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net/http"
 	"net/url"
@@ -22,18 +23,18 @@ import (
 	"github.com/bloveless/mu/logging"
 )
 
-type Tools map[string]*Tool
+type Registry map[string]*Tool
 
 type Tool struct {
 	Definition api.ToolDefinition
 	Exec       func(ctx context.Context, tc api.ToolCall) api.Message
 }
 
-func NewToolRegistry() Tools {
+func NewRegistry() Registry {
 	return make(map[string]*Tool)
 }
 
-func (tools Tools) RegisterTool(name string, t *Tool) error {
+func (tools Registry) Register(name string, t *Tool) error {
 	if _, ok := tools[name]; ok {
 		return fmt.Errorf("a tool named %s already exists", name)
 	}
@@ -41,7 +42,7 @@ func (tools Tools) RegisterTool(name string, t *Tool) error {
 	return nil
 }
 
-func (tools Tools) GetDefinitions() []api.ToolDefinition {
+func (tools Registry) GetDefinitions() []api.ToolDefinition {
 	tds := make([]api.ToolDefinition, 0, len(tools))
 	for _, t := range tools {
 		tds = append(tds, t.Definition)
@@ -49,7 +50,7 @@ func (tools Tools) GetDefinitions() []api.ToolDefinition {
 	return tds
 }
 
-func (tools Tools) ExecTool(ctx context.Context, tc api.ToolCall) api.Message {
+func (tools Registry) ExecTool(ctx context.Context, tc api.ToolCall) api.Message {
 	tool, ok := tools[tc.Function.Name]
 	if !ok {
 		existingTools := slices.Collect(maps.Keys(tools))
@@ -83,7 +84,7 @@ func truncateLines(s string, maxLines int) string {
 	return fmt.Sprintf("… (%d more lines)\n%s", hidden, strings.Join(lines[hidden:], "\n"))
 }
 
-func ReadTool() *Tool {
+func Read() *Tool {
 	return &Tool{
 		Definition: api.ToolDefinition{
 			Type: "function",
@@ -118,7 +119,7 @@ func ReadTool() *Tool {
 	}
 }
 
-func EditTool() *Tool {
+func Edit() *Tool {
 	return &Tool{
 		Definition: api.ToolDefinition{
 			Type: "function",
@@ -180,12 +181,16 @@ so ` + "`old_string`" + ` matches exactly.`,
 			if oldStr == "" {
 				existing, err := os.ReadFile(filePath)
 				if err == nil && len(existing) > 0 {
-					return api.NewToolResultMessage(tc.ID,
-						fmt.Sprintf(
-							"edit tool: refused to create file — %s already exists with content; provide a non-empty old_string to perform a replacement instead",
-							filePath,
-						),
-					)
+					return api.NewToolResultMessage(tc.ID, fmt.Sprintf(
+						"edit tool: refused to create file — %s already exists with content; provide a non-empty old_string to perform a replacement instead",
+						filePath,
+					))
+				}
+				if !errors.Is(err, fs.ErrNotExist) {
+					return api.NewToolResultMessage(tc.ID, fmt.Sprintf(
+						"edit tool: unable to read file at path to confirm that writing a new file is safe: %s",
+						err,
+					))
 				}
 				if err := os.WriteFile(filePath, []byte(newStr), 0o600); err != nil {
 					return api.NewToolResultMessage(tc.ID,
@@ -233,7 +238,7 @@ so ` + "`old_string`" + ` matches exactly.`,
 	}
 }
 
-func BashTool() *Tool {
+func Bash() *Tool {
 	return &Tool{
 		Definition: api.ToolDefinition{
 			Type: "function",
@@ -287,7 +292,7 @@ func BashTool() *Tool {
 	}
 }
 
-func FetchTool() *Tool {
+func Fetch() *Tool {
 	return &Tool{
 		Definition: api.ToolDefinition{
 			Type: "function",
@@ -308,43 +313,43 @@ func FetchTool() *Tool {
 		},
 		Exec: func(ctx context.Context, tc api.ToolCall) api.Message {
 			urlArg := gjson.Get(tc.Function.Arguments, "url")
-			url, err := url.Parse(urlArg.String())
+			u, err := url.Parse(urlArg.String())
 			if err != nil {
 				return api.NewToolResultMessage(tc.ID, fmt.Sprintf("received invalid url [%s]: error: %s", urlArg, err))
 			}
-			logging.ToolLog("fetching url: %s\n", url.String())
+			logging.ToolLog("fetching url: %s\n", u.String())
 			c := http.Client{
 				Timeout: 15 * time.Second,
 			}
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url.String(), http.NoBody)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
 			if err != nil {
 				return api.NewToolResultMessage(tc.ID, fmt.Sprintf(
-					"unable to create new request for fetching url [%s]: %s", url.String(), err,
+					"unable to create new request for fetching url [%s]: %s", u.String(), err,
 				))
 			}
 			resp, err := c.Do(req)
 			if err != nil {
 				return api.NewToolResultMessage(tc.ID, fmt.Sprintf(
-					"failed to fetch url [%s]; error: %s", url.String(), err),
+					"failed to fetch url [%s]; error: %s", u.String(), err),
 				)
 			}
 			defer resp.Body.Close() //nolint:errcheck // the agent doesn't need to know that the close failed
 			if resp.StatusCode < 200 || resp.StatusCode > 299 {
 				return api.NewToolResultMessage(tc.ID, fmt.Sprintf(
-					"status was not successful (2xx) for url [%s]: status code %d", url.String(), resp.StatusCode,
+					"status was not successful (2xx) for url [%s]: status code %d", u.String(), resp.StatusCode,
 				))
 			}
-			article, err := readability.FromReader(resp.Body, url)
+			article, err := readability.FromReader(resp.Body, u)
 			if err != nil {
 				return api.NewToolResultMessage(tc.ID, fmt.Sprintf(
-					"unable to parse response body for url [%s]: error %s", url.String(), err,
+					"unable to parse response body for url [%s]: error %s", u.String(), err,
 				))
 			}
 			md, err := htmltomarkdown.ConvertString(article.Node.Data)
 			if err != nil {
 				return api.NewToolResultMessage(tc.ID, fmt.Sprintf(
 					"unable to convert response to readability article markdown for url [%s]: error %s",
-					url.String(),
+					u.String(),
 					err,
 				))
 			}
