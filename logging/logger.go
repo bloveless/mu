@@ -20,34 +20,46 @@ const (
 
 var verbose bool
 
-func Init(v bool) {
+func SetVerbose(v bool) {
 	verbose = v
 }
 
+// Log prints user facing messages to stdout
 func Log(msg string, args ...any) {
 	fmt.Printf(msg, args...)
 }
 
+// ThinkingLog prints assistant thinking logs to stdout
 func ThinkingLog(msg string, args ...any) {
 	fmt.Printf(yellow+msg+reset, args...)
 }
 
+// AssistantLog prints assistant responses to stdout
 func AssistantLog(msg string, args ...any) {
 	fmt.Printf(blue+msg+reset, args...)
 }
 
+// ToolLog prints tool log formatted messages to stdout
 func ToolLog(msg string, args ...any) {
 	fmt.Printf(cyan+msg+reset, args...)
 }
 
+// ToolResultLog prints tool responses formatted to stdout
 func ToolResultLog(msg string, args ...any) {
 	fmt.Printf(lightGrey+msg+reset, args...)
 }
 
+// Error prints error logs to stderr
 func Error(msg string, args ...any) {
 	fmt.Fprintf(os.Stderr, msg, args...)
 }
 
+// Info prints info logs to stderr
+func Info(msg string, args ...any) {
+	fmt.Fprintf(os.Stderr, msg, args...)
+}
+
+// Debug prints debug logs to stderr
 func Debug(msg string, args ...any) {
 	if verbose {
 		fmt.Fprintf(os.Stderr, msg, args...)

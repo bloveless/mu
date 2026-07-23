@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/bloveless/mu/logging"
 )
 
 // Providers is the full /api.json response: provider ID -> Provider.
@@ -102,12 +104,12 @@ func GetProviders(ctx context.Context) (_ Providers, retErr error) {
 		// file is older than 24 hours, make a new one
 	default:
 		if p, err := loadProvidersFile("providers.json"); err == nil {
-			fmt.Fprintf(os.Stderr, "loaded providers.json file\n")
 			// return fresh parsed providers file
 			return p, nil
 		}
 		// unable to load providers file, make a new one
 	}
+	logging.Info("refreshing providers.json\n")
 	client := http.Client{
 		Timeout: 15 * time.Second,
 	}

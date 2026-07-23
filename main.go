@@ -32,7 +32,7 @@ func main() {
 }
 
 func run(verbose bool) error {
-	logging.Init(verbose)
+	logging.SetVerbose(verbose)
 
 	ctx := context.Background()
 	providers, err := api.GetProviders(ctx)
