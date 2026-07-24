@@ -35,7 +35,8 @@ type Loop struct {
 	AgentID       string
 	Client        api.Client
 	MaxIterations int
-	Model         string
+	Model         api.ProviderModel
+	Provider      api.Provider
 	ToolsRegistry tools.Registry
 	// SystemPrompt provides the identity of this agent and tools instructions project guidance should be in AGENTS.md
 	SystemPrompt string
@@ -146,10 +147,11 @@ func (l *Loop) streamIteration(
 	iteration int,
 ) (api.Message, error) {
 	stream, err := l.Client.ChatCompletionStream(ctx, api.ChatCompletionRequest{
-		Model:    l.Model,
-		Messages: messages,
-		Tools:    l.ToolsRegistry.GetDefinitions(),
-		Stream:   true,
+		Model:         l.Model.ID,
+		Messages:      messages,
+		Tools:         l.ToolsRegistry.GetDefinitions(),
+		Stream:        true,
+		StreamOptions: api.StreamOptions{IncludeUsage: true},
 	})
 	if err != nil {
 		return api.Message{}, fmt.Errorf("executing chat completion: %w", err)
@@ -164,6 +166,9 @@ func (l *Loop) streamIteration(
 		}
 		if err != nil {
 			return api.Message{}, fmt.Errorf("reading next message from stream: %w", err)
+		}
+		if resp.Usage != nil {
+			l.emit(ctx, events.KindUsage, FormatUsageLine(resp.Usage, &l.Model))
 		}
 		if len(resp.Choices) == 0 {
 			// some providers send usage-only/keepalive chunks with no choices

@@ -55,6 +55,10 @@ func ToolResultLog(msg string, args ...any) {
 	fmt.Printf(lightGrey+msg+reset, args...)
 }
 
+func UsageLog(msg string, args ...any) {
+	fmt.Printf(purple+msg+reset, args...)
+}
+
 // Error prints error logs to stderr
 func Error(msg string, args ...any) {
 	fmt.Fprintf(os.Stderr, msg, args...)
