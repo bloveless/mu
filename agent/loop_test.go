@@ -2,7 +2,9 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,12 +21,20 @@ import (
 // provider and records the emitted events, verifying the session consumes
 // an input, runs a turn, and ends when the input channel closes.
 func TestPipelineSmoke(t *testing.T) {
+	var reqBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		reqBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("reading request body: %v", err)
+		}
+		defer r.Body.Close()
 		w.Header().Set("Content-Type", "text/event-stream")
 		chunks := []string{
 			`{"choices":[{"delta":{"reasoning_content":"thinking..."}}]}`,
 			`{"choices":[{"delta":{"content":"Hello"}}]}`,
 			`{"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}]}`,
+			`{"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
 		}
 		for _, c := range chunks {
 			fmt.Fprintf(w, "data: %s\n\n", c)
@@ -94,6 +104,7 @@ func TestPipelineSmoke(t *testing.T) {
 		events.KindThinkingDelta,
 		events.KindContentDelta,
 		events.KindContentDelta,
+		events.KindUsage,
 		events.KindMessageEnd,
 		events.KindAwaitingInput,
 	}
@@ -110,6 +121,18 @@ func TestPipelineSmoke(t *testing.T) {
 	}
 	if got[2].Text != "thinking..." || got[3].Text != "Hello" || got[4].Text != " world" {
 		t.Errorf("unexpected delta texts: %q, %q, %q", got[2].Text, got[3].Text, got[4].Text)
+	}
+	if got[5].Text != "↑10 ↓5 R0 W0 CH0.0% $0.000 0.0%/0" {
+		t.Errorf("unexpected usage text: %q", got[5].Text)
+	}
+
+	// Verify stream_options.include_usage is true in the outgoing request.
+	var req api.ChatCompletionRequest
+	if err := json.Unmarshal(reqBody, &req); err != nil {
+		t.Fatalf("unmarshalling request body: %v", err)
+	}
+	if !req.StreamOptions.IncludeUsage {
+		t.Error("stream_options.include_usage should be true")
 	}
 }
 

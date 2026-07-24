@@ -9,22 +9,25 @@ import (
 
 func TestFormatUsageLine(t *testing.T) {
 	tests := []struct {
-		name  string
-		usage *api.Usage
-		model api.ProviderModel
-		want  string
+		name           string
+		usage          *api.Usage
+		model          api.ProviderModel
+		cumulativeCost float64
+		want           string
 	}{
 		{
-			name:  "nil usage returns empty string",
-			usage: nil,
-			model: api.ProviderModel{},
-			want:  "",
+			name:           "nil usage returns empty string",
+			usage:          nil,
+			model:          api.ProviderModel{},
+			cumulativeCost: 0,
+			want:           "",
 		},
 		{
-			name:  "all zeros with zero-valued model",
-			usage: &api.Usage{},
-			model: api.ProviderModel{},
-			want:  "↑0 ↓0 R0 W0 CH0.0% $0.000 0.0%/0",
+			name:           "all zeros with zero-valued model",
+			usage:          &api.Usage{},
+			model:          api.ProviderModel{},
+			cumulativeCost: 0,
+			want:           "↑0 ↓0 R0 W0 CH0.0% $0.000 0.0%/0",
 		},
 		{
 			name: "typical usage with cache activity",
@@ -55,7 +58,9 @@ func TestFormatUsageLine(t *testing.T) {
 			// cost = 3/1e6*1000=0.003 + 15/1e6*450=0.00675 + 0.3/1e6*200=0.00006 + 3.75/1e6*100=0.000375 = 0.010185 → $0.010
 			// context% = 1650/200000*100 = 0.8%
 			// contextWindow = 200k
-			want: "↑1.0k ↓450 R200 W100 CH15.4% $0.010 0.8%/200k",
+			// cumulativeCost = 0.010 (same as per-response since it's a single call)
+			cumulativeCost: 0.010,
+			want:           "↑1.0k ↓450 R200 W100 CH15.4% $0.010 0.8%/200k",
 		},
 		{
 			name: "high-volume model (claude-style) with large numbers",
@@ -85,7 +90,8 @@ func TestFormatUsageLine(t *testing.T) {
 			// CH% = 150000/350000*100 = 42.9%
 			// cost = 3/1e6*200000=0.6 + 15/1e6*50000=0.75 + 0.3/1e6*150000=0.045 + 3.75/1e6*0=0 = 1.395
 			// context% = 400000/200000*100 = 200.0%
-			want: "↑200k ↓50k R150k W0 CH42.9% $1.395 200.0%/200k",
+			cumulativeCost: 1.395,
+			want:           "↑200k ↓50k R150k W0 CH42.9% $1.395 200.0%/200k",
 		},
 		{
 			name: "formatTokens boundary: 999 -> raw",
@@ -93,8 +99,9 @@ func TestFormatUsageLine(t *testing.T) {
 				PromptTokens: 999,
 				TotalTokens:  999,
 			},
-			model: api.ProviderModel{Limit: api.Limit{Context: 2000}},
-			want:  "↑999 ↓0 R0 W0 CH0.0% $0.000 50.0%/2.0k",
+			model:          api.ProviderModel{Limit: api.Limit{Context: 2000}},
+			cumulativeCost: 0,
+			want:           "↑999 ↓0 R0 W0 CH0.0% $0.000 50.0%/2.0k",
 		},
 		{
 			name: "formatTokens boundary: 1000 -> 1.0k",
@@ -112,7 +119,8 @@ func TestFormatUsageLine(t *testing.T) {
 			// ↑ = 1000-500 = 500, R = 500
 			// totalPrompt = 500+500+0 = 1000, CH% = 500/1000*100 = 50.0%
 			// cost = 1/1e6*500 = 0.0005
-			want: "↑500 ↓0 R500 W0 CH50.0% $0.001 50.0%/2.0k",
+			cumulativeCost: 0.001,
+			want:           "↑500 ↓0 R500 W0 CH50.0% $0.001 50.0%/2.0k",
 		},
 		{
 			name: "formatTokens boundary: 10000 -> 10k (rounded, no decimal)",
@@ -127,7 +135,8 @@ func TestFormatUsageLine(t *testing.T) {
 			},
 			// ↑ = 10000 → "10k", ↓ = 150 → "150"
 			// cost = 1/1e6*10000=0.01 + 5/1e6*150=0.00075 = 0.01075 → $0.011
-			want: "↑10k ↓150 R0 W0 CH0.0% $0.011 10.0%/100k",
+			cumulativeCost: 0.011,
+			want:           "↑10k ↓150 R0 W0 CH0.0% $0.011 10.0%/100k",
 		},
 		{
 			name: "formatTokens boundary: 1000000 -> 1.0M",
@@ -135,8 +144,9 @@ func TestFormatUsageLine(t *testing.T) {
 				PromptTokens: 1000000,
 				TotalTokens:  1000000,
 			},
-			model: api.ProviderModel{Limit: api.Limit{Context: 2000000}},
-			want:  "↑1.0M ↓0 R0 W0 CH0.0% $0.000 50.0%/2.0M",
+			model:          api.ProviderModel{Limit: api.Limit{Context: 2000000}},
+			cumulativeCost: 0,
+			want:           "↑1.0M ↓0 R0 W0 CH0.0% $0.000 50.0%/2.0M",
 		},
 		{
 			name: "formatTokens boundary: 10000000 -> 10M (rounded, no decimal)",
@@ -144,8 +154,9 @@ func TestFormatUsageLine(t *testing.T) {
 				PromptTokens: 10000000,
 				TotalTokens:  10000000,
 			},
-			model: api.ProviderModel{Limit: api.Limit{Context: 20000000}},
-			want:  "↑10M ↓0 R0 W0 CH0.0% $0.000 50.0%/20M",
+			model:          api.ProviderModel{Limit: api.Limit{Context: 20000000}},
+			cumulativeCost: 0,
+			want:           "↑10M ↓0 R0 W0 CH0.0% $0.000 50.0%/20M",
 		},
 		{
 			name: "cached tokens exceed prompt tokens (defensive)",
@@ -167,7 +178,8 @@ func TestFormatUsageLine(t *testing.T) {
 			// totalPrompt = 0+200+50 = 250
 			// CH% = 200/250*100 = 80.0%
 			// cost = 1/1e6*0=0 + 0.1/1e6*200=0.00002 + 0.5/1e6*50=0.000025 = 0.000045 → $0.000
-			want: "↑0 ↓0 R200 W50 CH80.0% $0.000 10.0%/1.0k",
+			cumulativeCost: 0,
+			want:           "↑0 ↓0 R200 W50 CH80.0% $0.000 10.0%/1.0k",
 		},
 		{
 			name: "model with reasoning tokens (completion includes them)",
@@ -186,7 +198,8 @@ func TestFormatUsageLine(t *testing.T) {
 			// ↓ = 3000 (includes reasoning, same as pi convention)
 			// cost uses total completion = 3000
 			// cost = 1/1e6*500=0.0005 + 5/1e6*3000=0.015 = 0.0155 → $0.015 (banker's rounding)
-			want: "↑500 ↓3.0k R0 W0 CH0.0% $0.015 35.0%/10k",
+			cumulativeCost: 0.015,
+			want:           "↑500 ↓3.0k R0 W0 CH0.0% $0.015 35.0%/10k",
 		},
 		{
 			name: "formatTokens 9999 -> 10.0k",
@@ -194,8 +207,9 @@ func TestFormatUsageLine(t *testing.T) {
 				PromptTokens: 9999,
 				TotalTokens:  9999,
 			},
-			model: api.ProviderModel{Limit: api.Limit{Context: 10000}},
-			want:  "↑10.0k ↓0 R0 W0 CH0.0% $0.000 100.0%/10k",
+			model:          api.ProviderModel{Limit: api.Limit{Context: 10000}},
+			cumulativeCost: 0,
+			want:           "↑10.0k ↓0 R0 W0 CH0.0% $0.000 100.0%/10k",
 		},
 		{
 			name: "formatTokens 999999 -> 1000k",
@@ -203,8 +217,9 @@ func TestFormatUsageLine(t *testing.T) {
 				PromptTokens: 999999,
 				TotalTokens:  999999,
 			},
-			model: api.ProviderModel{Limit: api.Limit{Context: 1000000}},
-			want:  "↑1000k ↓0 R0 W0 CH0.0% $0.000 100.0%/1.0M",
+			model:          api.ProviderModel{Limit: api.Limit{Context: 1000000}},
+			cumulativeCost: 0,
+			want:           "↑1000k ↓0 R0 W0 CH0.0% $0.000 100.0%/1.0M",
 		},
 		{
 			name: "formatTokens 9999999 -> 10.0M",
@@ -212,14 +227,15 @@ func TestFormatUsageLine(t *testing.T) {
 				PromptTokens: 9999999,
 				TotalTokens:  9999999,
 			},
-			model: api.ProviderModel{Limit: api.Limit{Context: 10000000}},
-			want:  "↑10.0M ↓0 R0 W0 CH0.0% $0.000 100.0%/10M",
+			model:          api.ProviderModel{Limit: api.Limit{Context: 10000000}},
+			cumulativeCost: 0,
+			want:           "↑10.0M ↓0 R0 W0 CH0.0% $0.000 100.0%/10M",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := agent.FormatUsageLine(tt.usage, &tt.model)
+			got := agent.FormatUsageLine(tt.usage, &tt.model, tt.cumulativeCost)
 			if got != tt.want {
 				t.Errorf("\n got: %q\nwant: %q", got, tt.want)
 			}

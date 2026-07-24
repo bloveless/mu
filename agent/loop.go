@@ -43,6 +43,10 @@ type Loop struct {
 	// AgentInstructions provider project level guidance for how the agent should interact with this project.
 	AgentInstructions string
 	Events            chan events.Event
+
+	// CumulativeCost tracks the total USD cost of all API calls in this
+	// session, accumulated across turns and tool-call iterations.
+	CumulativeCost float64
 }
 
 // // emit pushes a display event onto the sink's channel.
@@ -159,6 +163,8 @@ func (l *Loop) streamIteration(
 	defer stream.Close() //nolint:errcheck // nothing useful to do with a close error here
 	var agentResponse strings.Builder
 	var finishReason string
+	costAtStart := l.CumulativeCost
+	var lastUsage *api.Usage
 	for {
 		resp, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -168,7 +174,8 @@ func (l *Loop) streamIteration(
 			return api.Message{}, fmt.Errorf("reading next message from stream: %w", err)
 		}
 		if resp.Usage != nil {
-			l.emit(ctx, events.KindUsage, FormatUsageLine(resp.Usage, &l.Model))
+			lastUsage = resp.Usage
+			l.emit(ctx, events.KindUsage, FormatUsageLine(resp.Usage, &l.Model, costAtStart+computeCost(resp.Usage, &l.Model)))
 		}
 		if len(resp.Choices) == 0 {
 			// some providers send usage-only/keepalive chunks with no choices
@@ -190,6 +197,10 @@ func (l *Loop) streamIteration(
 	logging.Debug("iteration %d; finish reason: %s\n", iteration, finishReason)
 	if finishReason == "length" {
 		logging.Error("iteration %d: response truncated by token limit (finish reason: length)\n", iteration)
+	}
+	// Persist this response's cost into the session cumulative total.
+	if lastUsage != nil {
+		l.CumulativeCost += computeCost(lastUsage, &l.Model)
 	}
 	calls := stream.ToolCalls()
 	if agentResponse.Len() == 0 && len(calls) == 0 {
