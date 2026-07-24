@@ -65,7 +65,7 @@ func (t *Terminal) Handle(ev events.Event) {
 	case events.KindError:
 		logging.AssistantError("%s\n", ev.Text)
 	case events.KindUsage:
-		logging.UsageLog("\n\n%s", ev.Text)
+		logging.UsageLog("\n\n%s\n", ev.Text)
 	}
 	t.last[ev.AgentID] = ev.Kind
 }

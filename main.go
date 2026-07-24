@@ -30,8 +30,8 @@ var AgentInstructions string
 
 func main() {
 	verbose := flag.Bool("v", false, "enable debug logging")
-	provider := flag.String("provider", "opencode", "provider to use")
-	model := flag.String("model", "deepseek-v4-flash-free", "model to use")
+	provider := flag.String("provider", "opencode-go", "provider to use")
+	model := flag.String("model", "deepseek-v4-pro", "model to use")
 	maxIterations := flag.Int("max-iterations", 50, "maximum number of iterations per user message")
 	flag.Parse()
 

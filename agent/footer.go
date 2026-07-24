@@ -7,12 +7,31 @@ import (
 	"github.com/bloveless/mu/api"
 )
 
+// computeCost returns the USD cost for a single response's token usage
+// given the provider model's pricing (rates are USD per 1,000,000 tokens).
+func computeCost(usage *api.Usage, model *api.ProviderModel) float64 {
+	cached := usage.PromptTokenDetails.CachedTokens
+	nonCached := safeSubtract(usage.PromptTokens, cached)
+	cacheWrite := usage.PromptTokenDetails.CacheWriteTokens
+	output := usage.CompletionTokens
+
+	totalCost := float64(nonCached)*model.Cost.Input +
+		float64(output)*model.Cost.Output +
+		float64(cached)*model.Cost.CacheRead +
+		float64(cacheWrite)*model.Cost.CacheWrite
+	return totalCost / 1_000_000
+}
+
 // FormatUsageLine returns a one-line stats string for a stream response's
 // usage and the provider model that produced it. All fields are always
 // present — nothing is conditional.
 //
+// cumulativeCost is the session-level total USD cost (including all
+// previous turns and tool calls). The token breakdown and context
+// percentage always reflect the current (latest) response.
+//
 // Returns "" when usage is nil.
-func FormatUsageLine(usage *api.Usage, model *api.ProviderModel) string {
+func FormatUsageLine(usage *api.Usage, model *api.ProviderModel, cumulativeCost float64) string {
 	if usage == nil {
 		return ""
 	}
@@ -30,13 +49,6 @@ func FormatUsageLine(usage *api.Usage, model *api.ProviderModel) string {
 		cacheHitRate = float64(cached) / float64(totalPrompt) * 100
 	}
 
-	// Cost: rates are USD per 1,000,000 tokens.
-	totalCost := float64(nonCached)*model.Cost.Input +
-		float64(output)*model.Cost.Output +
-		float64(cached)*model.Cost.CacheRead +
-		float64(cacheWrite)*model.Cost.CacheWrite
-	totalCost /= 1_000_000
-
 	// Context usage: what percentage of the model's context window is used?
 	var contextPercent float64
 	if model.Limit.Context > 0 {
@@ -50,7 +62,7 @@ func FormatUsageLine(usage *api.Usage, model *api.ProviderModel) string {
 		formatTokens(cached),
 		formatTokens(cacheWrite),
 		cacheHitRate,
-		totalCost,
+		cumulativeCost,
 		contextPercent,
 		formatTokens(uint32(model.Limit.Context)),
 	)
