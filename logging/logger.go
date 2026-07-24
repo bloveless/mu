@@ -40,6 +40,11 @@ func AssistantLog(msg string, args ...any) {
 	fmt.Printf(msg, args...)
 }
 
+// AssistantError prints assistant error messages to stdout
+func AssistantError(msg string, args ...any) {
+	fmt.Printf(red+msg+reset, args...)
+}
+
 // ToolLog prints tool log formatted messages to stdout
 func ToolLog(msg string, args ...any) {
 	fmt.Printf(cyan+msg+reset, args...)
