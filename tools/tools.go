@@ -20,16 +20,23 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/bloveless/mu/api"
+	"github.com/bloveless/mu/events"
 	"github.com/bloveless/mu/logging"
 )
 
 type Registry map[string]*Tool
 
+type Emitter func(ctx context.Context, kind events.Kind, text string)
+
 type Tool struct {
 	Definition api.ToolDefinition
-	Exec       func(ctx context.Context, tc api.ToolCall) api.Message
+	// Exec runs the tool. Progress notes ("reading file: x") are pushed
+	// onto sink, the same event channel the agent loop uses, so they are
+	// attributed to the calling agent.
+	Exec func(ctx context.Context, tc api.ToolCall, emit Emitter) api.Message
 }
 
+// NewRegistry creates an empty tool registry.
 func NewRegistry() Registry {
 	return make(map[string]*Tool)
 }
@@ -50,7 +57,9 @@ func (tools Registry) GetDefinitions() []api.ToolDefinition {
 	return tds
 }
 
-func (tools Registry) ExecTool(ctx context.Context, tc api.ToolCall) api.Message {
+// ExecTool dispatches a tool call to the named tool. Displaying the
+// result is the caller's concern; tools only report progress on sink.
+func (tools Registry) ExecTool(ctx context.Context, tc api.ToolCall, emit Emitter) api.Message {
 	tool, ok := tools[tc.Function.Name]
 	if !ok {
 		existingTools := slices.Collect(maps.Keys(tools))
@@ -63,27 +72,10 @@ func (tools Registry) ExecTool(ctx context.Context, tc api.ToolCall) api.Message
 			),
 		)
 	}
-	result := tool.Exec(ctx, tc)
-	logging.ToolResultLog("%s\n", truncateLines(result.Content, 5))
-	return result
+	return tool.Exec(ctx, tc, emit)
 }
 
-// truncateLines returns s unchanged when it has maxLines or fewer lines;
-// otherwise it returns a "… (N more lines)" indicator followed by the last
-// maxLines lines.
-func truncateLines(s string, maxLines int) string {
-	s = strings.TrimRight(s, "\n")
-	if s == "" {
-		return "(no output)"
-	}
-	lines := strings.Split(s, "\n")
-	if len(lines) <= maxLines {
-		return s
-	}
-	hidden := len(lines) - maxLines
-	return fmt.Sprintf("… (%d more lines)\n%s", hidden, strings.Join(lines[hidden:], "\n"))
-}
-
+// Read creates a tool that reads and returns the contents of a specified file.
 func Read() *Tool {
 	return &Tool{
 		Definition: api.ToolDefinition{
@@ -103,9 +95,9 @@ func Read() *Tool {
 	            }`),
 			},
 		},
-		Exec: func(ctx context.Context, tc api.ToolCall) api.Message {
+		Exec: func(ctx context.Context, tc api.ToolCall, emit Emitter) api.Message {
 			path := gjson.Get(tc.Function.Arguments, "file_path")
-			logging.ToolLog("reading file: %s\n", path.String())
+			emit(ctx, events.KindToolProgress, fmt.Sprintf("reading file: %s", path.String()))
 			b, err := os.ReadFile(path.String())
 			if err != nil {
 				return api.NewToolResultMessage(
@@ -119,6 +111,8 @@ func Read() *Tool {
 	}
 }
 
+// Edit creates a tool that creates files or replaces one unique, exact string in an existing file.
+// An empty old_string creates a file only when the path does not already contain content.
 func Edit() *Tool {
 	return &Tool{
 		Definition: api.ToolDefinition{
@@ -156,7 +150,7 @@ so ` + "`old_string`" + ` matches exactly.`,
 	            }`),
 			},
 		},
-		Exec: func(ctx context.Context, tc api.ToolCall) api.Message {
+		Exec: func(ctx context.Context, tc api.ToolCall, emit Emitter) api.Message {
 			args := tc.Function.Arguments
 			fpResult := gjson.Get(args, "file_path")
 			if !fpResult.Exists() {
@@ -196,7 +190,7 @@ so ` + "`old_string`" + ` matches exactly.`,
 					return api.NewToolResultMessage(tc.ID,
 						fmt.Sprintf("edit tool: failed to write file %s: %s", filePath, err))
 				}
-				logging.ToolLog("file created [%s]\n", filePath)
+				emit(ctx, events.KindToolProgress, fmt.Sprintf("file created [%s]", filePath))
 				logging.Debug("--- new content ---\n%s\n---\n", newStr)
 				return api.NewToolResultMessage(tc.ID, fmt.Sprintf("file created: %s", filePath))
 			}
@@ -230,7 +224,7 @@ so ` + "`old_string`" + ` matches exactly.`,
 					return api.NewToolResultMessage(tc.ID,
 						fmt.Sprintf("edit tool: failed to write file %s: %s", filePath, err))
 				}
-				logging.ToolLog("edited file [%s]\n", filePath)
+				emit(ctx, events.KindToolProgress, fmt.Sprintf("edited file [%s]", filePath))
 				logging.Debug("--- old string ---\n%s\n--- new string---\n%s\n---\n", oldStr, newStr)
 				return api.NewToolResultMessage(tc.ID, fmt.Sprintf("file edited: %s", filePath))
 			}
@@ -238,6 +232,7 @@ so ` + "`old_string`" + ` matches exactly.`,
 	}
 }
 
+// Bash creates a tool that executes a shell command and returns its exit code, standard output, and standard error.
 func Bash() *Tool {
 	return &Tool{
 		Definition: api.ToolDefinition{
@@ -257,9 +252,9 @@ func Bash() *Tool {
 	            }`),
 			},
 		},
-		Exec: func(ctx context.Context, tc api.ToolCall) api.Message {
+		Exec: func(ctx context.Context, tc api.ToolCall, emit Emitter) api.Message {
 			command := gjson.Get(tc.Function.Arguments, "command")
-			logging.ToolLog("executing command: %s\n", command.String())
+			emit(ctx, events.KindToolProgress, fmt.Sprintf("executing command: %s", command.String()))
 			var stdout, stderr bytes.Buffer
 			cmd := exec.CommandContext(ctx, "bash", "-c", command.String()) //nolint:gosec // allowing arbitrary command execution is the point
 			cmd.Stdout = &stdout
@@ -292,6 +287,7 @@ func Bash() *Tool {
 	}
 }
 
+// Fetch returns a tool that retrieves a website and converts its readable content to Markdown.
 func Fetch() *Tool {
 	return &Tool{
 		Definition: api.ToolDefinition{
@@ -311,13 +307,13 @@ func Fetch() *Tool {
 	            }`),
 			},
 		},
-		Exec: func(ctx context.Context, tc api.ToolCall) api.Message {
+		Exec: func(ctx context.Context, tc api.ToolCall, emit Emitter) api.Message {
 			urlArg := gjson.Get(tc.Function.Arguments, "url")
 			u, err := url.Parse(urlArg.String())
 			if err != nil {
 				return api.NewToolResultMessage(tc.ID, fmt.Sprintf("received invalid url [%s]: error: %s", urlArg, err))
 			}
-			logging.ToolLog("fetching url: %s\n", u.String())
+			emit(ctx, events.KindToolProgress, fmt.Sprintf("fetching url: %s", u.String()))
 			c := http.Client{
 				Timeout: 15 * time.Second,
 			}
