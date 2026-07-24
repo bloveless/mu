@@ -341,7 +341,7 @@ func Fetch() *Tool {
 					"unable to parse response body for url [%s]: error %s", u.String(), err,
 				))
 			}
-			md, err := htmltomarkdown.ConvertString(article.Node.Data)
+			mdBytes, err := htmltomarkdown.ConvertNode(article.Node)
 			if err != nil {
 				return api.NewToolResultMessage(tc.ID, fmt.Sprintf(
 					"unable to convert response to readability article markdown for url [%s]: error %s",
@@ -349,6 +349,7 @@ func Fetch() *Tool {
 					err,
 				))
 			}
+			md := string(mdBytes)
 			logging.Debug("fetched url markdown:\n--- output ---\n%s\n---\n", md)
 			return api.NewToolResultMessage(tc.ID, md)
 		},
