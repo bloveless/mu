@@ -32,6 +32,8 @@ const (
 	KindAwaitingInput
 	// KindError is a general error message that needs to be displayed to the user
 	KindError
+	// KindUsage marks a usage message from the model, e.g. token usage information
+	KindUsage
 )
 
 // Event is a single displayable occurrence. AgentID identifies which agent

@@ -92,29 +92,29 @@ type FunctionDefinition struct {
 
 // ChatCompletionRequest is the request body for chat completions.
 type ChatCompletionRequest struct {
-	Model    string           `json:"model"`
-	Messages []Message        `json:"messages"`
-	Tools    []ToolDefinition `json:"tools,omitempty"`
-	Stream   bool             `json:"stream,omitempty"`
+	Model         string           `json:"model"`
+	Messages      []Message        `json:"messages"`
+	Tools         []ToolDefinition `json:"tools,omitempty"`
+	Stream        bool             `json:"stream,omitempty"`
+	StreamOptions StreamOptions    `json:"stream_options,omitempty"`
+}
+
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 // ChatCompletionResponse is the non-streaming response.
+// TODO: we are streaming only now it's probably safe to remove all the non-streaming structs
 type ChatCompletionResponse struct {
 	ID      string   `json:"id"`
 	Choices []Choice `json:"choices"`
-	Usage   Usage    `json:"usage,omitempty"`
+	Usage   *Usage   `json:"usage,omitempty"`
 }
 
 type Choice struct {
 	Index        int     `json:"index"`
 	Message      Message `json:"message"`
 	FinishReason string  `json:"finish_reason,omitempty"`
-}
-
-type Usage struct {
-	PromptTokens     uint32 `json:"prompt_tokens"`
-	CompletionTokens uint32 `json:"completion_tokens"`
-	TotalTokens      uint32 `json:"total_tokens"`
 }
 
 type Model struct {
@@ -138,6 +138,28 @@ type StreamChunk struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *Usage `json:"usage"`
+}
+
+type Usage struct {
+	CompletionTokens       uint32                 `json:"completion_tokens"`
+	PromptTokens           uint32                 `json:"prompt_tokens"`
+	TotalTokens            uint32                 `json:"total_tokens"`
+	CompletionTokenDetails CompletionTokenDetails `json:"completion_token_details"`
+	PromptTokenDetails     PromptTokenDetails     `json:"prompt_token_details"`
+}
+
+type CompletionTokenDetails struct {
+	AcceptedPredictionTokens uint32 `json:"accepted_prediction_tokens"`
+	AudioTokens              uint32 `json:"audio_tokens"`
+	ReasoningTokens          uint32 `json:"reasoning_tokens"`
+	RejectedPredictionTokens uint32 `json:"rejected_prediction_tokens"`
+}
+
+type PromptTokenDetails struct {
+	AudioTokens      uint32 `json:"audio_tokens"`
+	CacheWriteTokens uint32 `json:"cache_write_tokens"`
+	CachedTokens     uint32 `json:"cached_tokens"`
 }
 
 type StreamToolCall struct {

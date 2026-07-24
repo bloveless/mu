@@ -42,7 +42,8 @@ func TestPipelineSmoke(t *testing.T) {
 	loop := agent.Loop{
 		AgentID:       "root",
 		Client:        api.NewClient(baseURL, "test-key"),
-		Model:         "test-model",
+		MaxIterations: 50,
+		Model:         api.ProviderModel{},
 		ToolsRegistry: tools.NewRegistry(),
 		SystemPrompt:  "you are a test",
 		Events:        eventCh,

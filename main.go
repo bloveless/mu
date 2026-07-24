@@ -69,6 +69,12 @@ func run(verbose bool, provider, model string, maxIterations int) error {
 		return fmt.Errorf("unable to find required API key [%s] in environment", p.Env[0])
 	}
 	c := api.NewClient(baseURL, apiKey)
+
+	m, ok := p.Models[model]
+	if !ok {
+		return fmt.Errorf("model %q not found in provider %q", model, provider)
+	}
+
 	mainToolsReg, err := mainAgentToolRegistry()
 	if err != nil {
 		return fmt.Errorf("getting tool registry: %w", err)
@@ -92,7 +98,8 @@ func run(verbose bool, provider, model string, maxIterations int) error {
 			AgentID:           "root",
 			Client:            c,
 			MaxIterations:     maxIterations,
-			Model:             model,
+			Model:             m,
+			Provider:          p,
 			ToolsRegistry:     mainToolsReg,
 			SystemPrompt:      DefaultInstructions,
 			AgentInstructions: AgentInstructions,
@@ -104,7 +111,7 @@ func run(verbose bool, provider, model string, maxIterations int) error {
 		return nil
 	})
 	g.Go(func() error {
-		renderer := render.NewTerminal(fmt.Sprintf("%s:%s > ", p.Name, model))
+		renderer := render.NewTerminal(fmt.Sprintf("%s:%s > ", p.ID, model))
 		for ev := range eventCh {
 			renderer.Handle(ev)
 		}
