@@ -40,9 +40,7 @@ type Loop struct {
 	ToolsRegistry tools.Registry
 	// SystemPrompt provides the identity of this agent and tools instructions project guidance should be in AGENTS.md
 	SystemPrompt string
-	// AgentInstructions provider project level guidance for how the agent should interact with this project.
-	AgentInstructions string
-	Events            chan events.Event
+	Events       chan events.Event
 
 	// CumulativeCost tracks the total USD cost of all API calls in this
 	// session, accumulated across turns and tool-call iterations.
@@ -72,16 +70,27 @@ func (l *Loop) Run(ctx context.Context, in <-chan Input) error {
 	if l.SystemPrompt != "" {
 		messages = append(messages, api.Message{Role: api.RoleSystem, Content: l.SystemPrompt})
 	}
-	if l.AgentInstructions != "" {
-		messages = append(messages, api.Message{Role: api.RoleSystem, Content: fmt.Sprintf(
-			`These are the instructions on how you should interact with this project.
-Follow them closely and only deviate from them if the user specifically asks it.
-If you are unsure and run into any contradictions then ask the user what to do:
+	facts := getFacts()
+	messages = append(messages, api.Message{Role: api.RoleSystem, Content: facts.String()})
+	agentInst, instSize := getAgentInstructions(ctx)
+	if instSize > 25_000 {
+		l.emit(ctx, events.KindWarning, fmt.Sprintf(
+			"AGENTS.md is %d KB — large instruction files increase token usage and may crowd out conversation context.",
+			instSize/1024,
+		))
+	}
+	if agentInst != "" {
+		messages = append(messages, api.Message{
+			Role: api.RoleSystem, Content: fmt.Sprintf(
+				`These are the instructions on how you should interact with this project.
+	Follow them closely and only deviate from them if the user specifically asks it.
+	If you are unsure and run into any contradictions then ask the user what to do:
 
-# AGENTS.md
-%s`,
-			l.AgentInstructions,
-		)})
+	# AGENTS.md
+	%s`,
+				agentInst,
+			),
+		})
 	}
 	for {
 		l.emit(ctx, events.KindAwaitingInput, "")

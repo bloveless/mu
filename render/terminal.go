@@ -64,6 +64,8 @@ func (t *Terminal) Handle(ev events.Event) {
 		logging.Log("%s", t.prompt)
 	case events.KindError:
 		logging.AssistantError("%s\n", ev.Text)
+	case events.KindWarning:
+		logging.WarningLog("⚠ %s\n", ev.Text)
 	case events.KindUsage:
 		logging.UsageLog("\n\n%s\n", ev.Text)
 	}

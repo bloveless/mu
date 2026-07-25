@@ -34,6 +34,8 @@ const (
 	KindError
 	// KindUsage marks a usage message from the model, e.g. token usage information
 	KindUsage
+	// KindWarning is a non-fatal advisory (e.g. large AGENTS.md file)
+	KindWarning
 )
 
 // Event is a single displayable occurrence. AgentID identifies which agent
