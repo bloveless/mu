@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// Role represents the role of a message sender.
 type Role string
 
 const (
@@ -99,33 +100,9 @@ type ChatCompletionRequest struct {
 	StreamOptions StreamOptions    `json:"stream_options,omitempty"`
 }
 
+// StreamOptions contains options for streaming chat completions.
 type StreamOptions struct {
 	IncludeUsage bool `json:"include_usage,omitempty"`
-}
-
-// ChatCompletionResponse is the non-streaming response.
-// TODO: we are streaming only now it's probably safe to remove all the non-streaming structs
-type ChatCompletionResponse struct {
-	ID      string   `json:"id"`
-	Choices []Choice `json:"choices"`
-	Usage   *Usage   `json:"usage,omitempty"`
-}
-
-type Choice struct {
-	Index        int     `json:"index"`
-	Message      Message `json:"message"`
-	FinishReason string  `json:"finish_reason,omitempty"`
-}
-
-type Model struct {
-	ID      string   `json:"id"`
-	Object  string   `json:"object"`
-	Created UnixTime `json:"created"`
-	OwnedBy string   `json:"owned_by"`
-}
-
-type ModelsResponse struct {
-	Data []Model `json:"data"`
 }
 
 type StreamChunk struct {

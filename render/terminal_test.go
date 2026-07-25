@@ -1,6 +1,59 @@
 package render
 
-import "testing"
+import (
+	"bytes"
+	"io"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/bloveless/mu/events"
+)
+
+func TestSubagentHeaderFooter(t *testing.T) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	term := NewTerminal("prompt> ")
+	term.Handle(events.Event{AgentID: "root", Kind: events.KindContentDelta, Text: "parent output"})
+	term.Handle(events.Event{AgentID: "subagent", Kind: events.KindContentDelta, Text: "child output"})
+	term.Handle(events.Event{AgentID: "subagent", Kind: events.KindMessageEnd, Text: ""})
+	term.Handle(events.Event{AgentID: "root", Kind: events.KindContentDelta, Text: "parent again"})
+
+	w.Close()
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	os.Stdout = old
+
+	out := buf.String()
+	if !strings.Contains(out, "SUBAGENT (subagent)") {
+		t.Errorf("expected SUBAGENT header, got: %s", out)
+	}
+	if !strings.Contains(out, "END SUBAGENT (subagent)") {
+		t.Errorf("expected END SUBAGENT footer, got: %s", out)
+	}
+}
+
+func TestSubagentContentIsDimmed(t *testing.T) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	term := NewTerminal("prompt> ")
+	term.Handle(events.Event{AgentID: "subagent", Kind: events.KindContentDelta, Text: "dimmed text"})
+
+	w.Close()
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	os.Stdout = old
+
+	out := buf.String()
+	// \033[2m is the ANSI dim code.
+	if !strings.Contains(out, "\033[2m") {
+		t.Errorf("expected dim ANSI code in sub-agent output, got: %s", out)
+	}
+}
 
 func TestTruncateLines(t *testing.T) {
 	tests := []struct {

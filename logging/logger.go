@@ -21,6 +21,7 @@ const (
 
 var verbose bool
 
+// SetVerbose sets the verbose flag to enable verbose logging. This acts at the package level and affects all log calls.
 func SetVerbose(v bool) {
 	verbose = v
 }
@@ -56,6 +57,7 @@ func ToolResultLog(msg string, args ...any) {
 	fmt.Printf(lightGrey+msg+reset, args...)
 }
 
+// UsageLog prints usage (context, cost, etc.) log formatted messages to stdout
 func UsageLog(msg string, args ...any) {
 	fmt.Printf(purple+msg+reset, args...)
 }

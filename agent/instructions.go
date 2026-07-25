@@ -15,6 +15,7 @@ type facts struct {
 	Now              time.Time
 }
 
+// String returns an agent-readable string representation of the facts.
 func (f facts) String() string {
 	return fmt.Sprintf("Current working directory: %s\nConversation started at: %s", f.WorkingDirectory, f.Now)
 }
@@ -32,6 +33,7 @@ func getFacts() facts {
 	}
 }
 
+// getAgentInstructions returns the agent's instructions for the current project.
 func getAgentInstructions(ctx context.Context) (string, int) {
 	// codex will start at the project root and concatenate AGENTS.md files down to the current working directory to
 	// build up the instructions... this might be interesting eventually. https://learn.chatgpt.com/docs/agent-configuration/agents-md
@@ -51,6 +53,7 @@ func getAgentInstructions(ctx context.Context) (string, int) {
 	return string(f), len(f)
 }
 
+// getGitRoot returns the root directory of the current git repository.
 func getGitRoot(ctx context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()

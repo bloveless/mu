@@ -24,10 +24,13 @@ import (
 	"github.com/bloveless/mu/logging"
 )
 
+// Registry holds a collection of tools that can be executed by the agent.
 type Registry map[string]*Tool
 
+// Emitter is a function that emits log events.
 type Emitter func(ctx context.Context, kind events.Kind, text string)
 
+// Tool holds a tool definition and its execution logic.
 type Tool struct {
 	Definition api.ToolDefinition
 	// Exec runs the tool. Progress notes ("reading file: x") are pushed
@@ -41,28 +44,30 @@ func NewRegistry() Registry {
 	return make(map[string]*Tool)
 }
 
-func (tools Registry) Register(name string, t *Tool) error {
-	if _, ok := tools[name]; ok {
+// Register adds a tool to the registry.
+func (reg Registry) Register(name string, t *Tool) error {
+	if _, ok := reg[name]; ok {
 		return fmt.Errorf("a tool named %s already exists", name)
 	}
-	tools[name] = t
+	reg[name] = t
 	return nil
 }
 
-func (tools Registry) GetDefinitions() []api.ToolDefinition {
-	tds := make([]api.ToolDefinition, 0, len(tools))
-	for _, t := range tools {
+// GetDefinitions returns all tool definitions in the registry for use in model calls.
+func (reg Registry) GetDefinitions() []api.ToolDefinition {
+	tds := make([]api.ToolDefinition, 0, len(reg))
+	for _, t := range reg {
 		tds = append(tds, t.Definition)
 	}
 	return tds
 }
 
-// ExecTool dispatches a tool call to the named tool. Displaying the
-// result is the caller's concern; tools only report progress on sink.
-func (tools Registry) ExecTool(ctx context.Context, tc api.ToolCall, emit Emitter) api.Message {
-	tool, ok := tools[tc.Function.Name]
+// ExecTool dispatches a tool call to the named tool. Displaying the result is the caller's concern;
+// tools only report progress via the provided emitter.
+func (reg Registry) ExecTool(ctx context.Context, tc api.ToolCall, emit Emitter) api.Message {
+	tool, ok := reg[tc.Function.Name]
 	if !ok {
-		existingTools := slices.Collect(maps.Keys(tools))
+		existingTools := slices.Collect(maps.Keys(reg))
 		return api.NewToolResultMessage(
 			tc.ID,
 			fmt.Sprintf(

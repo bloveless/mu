@@ -78,6 +78,7 @@ type Interleaved struct {
 	Field     string `json:"field,omitempty"`
 }
 
+// UnmarshalJSON unmarshals the "interleaved" field from JSON data.
 func (i *Interleaved) UnmarshalJSON(data []byte) error {
 	var asBool bool
 	if err := json.Unmarshal(data, &asBool); err == nil {
@@ -95,6 +96,8 @@ func (i *Interleaved) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// GetProviders retrieves the providers from the providers.json file. If the providers.json file doesn't exist or is
+// older than 24 hours then it will be refreshed from the models.dev API.
 func GetProviders(ctx context.Context) (_ Providers, retErr error) {
 	fi, err := os.Stat("providers.json")
 	switch {
@@ -143,6 +146,7 @@ func GetProviders(ctx context.Context) (_ Providers, retErr error) {
 	return p, nil
 }
 
+// loadProvidersFile loads the providers from the providers.json file on disk.
 func loadProvidersFile(file string) (Providers, error) {
 	f, err := os.Open(file)
 	if err != nil {
