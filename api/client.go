@@ -15,12 +15,14 @@ import (
 	"github.com/bloveless/mu/logging"
 )
 
+// Client is the main API client for interacting with the chat completion API.
 type Client struct {
 	baseURL    *url.URL
 	apiKey     string
 	httpClient *http.Client
 }
 
+// NewClient creates a new API client with the given base URL and API key.
 func NewClient(baseURL *url.URL, apiKey string) Client {
 	return Client{
 		baseURL: baseURL,
@@ -31,6 +33,7 @@ func NewClient(baseURL *url.URL, apiKey string) Client {
 	}
 }
 
+// ChatStream is a struct for streaming chat completion responses.
 type ChatStream struct {
 	scanner   *bufio.Scanner
 	resp      io.ReadCloser
@@ -85,6 +88,7 @@ type ToolCallAccumulator struct {
 	order []int
 }
 
+// NewToolCallAccumulator creates a new ToolCallAccumulator.
 func NewToolCallAccumulator() *ToolCallAccumulator {
 	return &ToolCallAccumulator{calls: make(map[int]*ToolCall)}
 }
