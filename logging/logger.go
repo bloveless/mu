@@ -16,6 +16,7 @@ const (
 	cyan      = "\033[36m"
 	white     = "\033[37m"
 	lightGrey = "\033[90m"
+	orange    = "\033[38;5;208m"
 )
 
 var verbose bool
@@ -67,6 +68,11 @@ func Error(msg string, args ...any) {
 // Info prints info logs to stderr
 func Info(msg string, args ...any) {
 	fmt.Fprintf(os.Stderr, msg, args...)
+}
+
+// WarningLog prints warning messages to stdout in orange.
+func WarningLog(msg string, args ...any) {
+	fmt.Printf(orange+msg+reset, args...)
 }
 
 // Debug prints debug logs to stderr

@@ -25,9 +25,6 @@ import (
 //go:embed DEFAULT_INSTRUCTIONS.md
 var DefaultInstructions string
 
-//go:embed AGENTS.md
-var AgentInstructions string
-
 func main() {
 	verbose := flag.Bool("v", false, "enable debug logging")
 	provider := flag.String("provider", "opencode-go", "provider to use")
@@ -95,15 +92,14 @@ func run(verbose bool, provider, model string, maxIterations int) error {
 	g.Go(func() error {
 		defer close(eventCh)
 		loop := agent.Loop{
-			AgentID:           "root",
-			Client:            c,
-			MaxIterations:     maxIterations,
-			Model:             m,
-			Provider:          p,
-			ToolsRegistry:     mainToolsReg,
-			SystemPrompt:      DefaultInstructions,
-			AgentInstructions: AgentInstructions,
-			Events:            eventCh,
+			AgentID:       "root",
+			Client:        c,
+			MaxIterations: maxIterations,
+			Model:         m,
+			Provider:      p,
+			ToolsRegistry: mainToolsReg,
+			SystemPrompt:  DefaultInstructions,
+			Events:        eventCh,
 		}
 		if err := loop.Run(ctx, inputCh); err != nil {
 			return fmt.Errorf("running agent loop: %w", err)
