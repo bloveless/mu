@@ -6,7 +6,7 @@ It was written to scratch the author's own itch: a lightweight, local-first agen
 
 ## Features
 
-- **Agentic tool loop** — the model proposes tool calls, mu2 executes them, feeds the results back, and loops until the task is done (up to 50 iterations per user message).
+- **Agentic tool loop** — the model proposes tool calls, mu2 executes them, feeds the results back, and loops until the task is done (up to 50 iterations per user message, configurable via `-max-iterations`).
 - **Streaming responses** — see the model's reasoning and replies as they arrive, color-coded for clarity:
   - 🟡 Yellow = model thinking/reasoning
   - 🔵 Blue = assistant response
@@ -26,7 +26,7 @@ It was written to scratch the author's own itch: a lightweight, local-first agen
 ### Prerequisites
 
 - Go 1.26+
-- An API key for a supported provider (currently hardcoded to `OPENCODE_API_KEY` from the [OpenCode](https://opencode.ai) provider)
+- An API key for the selected provider (defaults to `OPENCODE_API_KEY` for the default `opencode-go` provider)
 
 ### Build & Run
 
@@ -41,16 +41,21 @@ You'll be dropped into a REPL. Type your prompts and watch the agent work.
 
 ### Command-line flags
 
-| Flag | Description |
-|------|-------------|
-| `-v` | Enable verbose/debug logging to stderr |
-| `-cli` | Use the plain terminal CLI instead of the Bubble Tea TUI |
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-v` | `false` | Enable verbose/debug logging. In TUI mode, logs are written to a temporary file (path printed to stderr) instead of stderr to avoid garbling the terminal. |
+| `-cli` | `false` | Use the plain terminal CLI instead of the Bubble Tea TUI |
+| `-provider` | `opencode-go` | Main agent provider |
+| `-model` | `deepseek-v4-pro` | Main agent model |
+| `-subagent-provider` | `opencode` | Sub-agent provider |
+| `-subagent-model` | `deepseek-v4-flash-free` | Sub-agent model |
+| `-max-iterations` | `50` | Maximum number of tool-call iterations per user message |
 
 ## How It Works
 
-1. **Startup**: mu2 fetches the provider catalog from `https://models.dev/api.json`, caches it to `providers.json`, and selects the `opencode` provider with the `deepseek-v4-flash-free` model.
+1. **Startup**: mu2 fetches the provider catalog from `https://models.dev/api.json`, caches it to `providers.json`, and selects the configured provider and model (defaults: `opencode-go` / `deepseek-v4-pro` for the main agent, `opencode` / `deepseek-v4-flash-free` for the sub-agent).
 2. **REPL**: Prompts are read from stdin. Each prompt starts a new agent loop.
-3. **Agent loop**: For each iteration (up to 50):
+3. **Agent loop**: For each iteration (up to `-max-iterations`, default 50):
    - Send the conversation (system prompt + messages) to the LLM API over SSE.
    - Stream the response to stdout, displaying reasoning content in yellow and assistant content in blue.
    - If the model returns tool calls, execute each one and append the result as a new message.
@@ -78,22 +83,18 @@ You'll be dropped into a REPL. Type your prompts and watch the agent work.
 
 ## Configuration
 
-Currently mu2 is configured entirely via code in `main.go`:
+mu2 is configured via command-line flags (see table above). Key settings:
 
-- **Provider**: hardcoded to `"opencode"`
-- **Model**: hardcoded to `"deepseek-v4-flash-free"`
-- **API key**: read from the environment variable specified by the provider (e.g., `OPENCODE_API_KEY`)
-- **Max iterations**: `MaxIterationsPerUserMessage = 50`
-
-Making these configurable (via config file or CLI flags) is on the roadmap.
+- **Provider & model** (`-provider`, `-model`): select any provider/model pair from the [models.dev](https://models.dev) catalog.
+- **Sub-agent** (`-subagent-provider`, `-subagent-model`): the sub-agent uses a separate, typically cheaper model for delegated tasks.
+- **Max iterations** (`-max-iterations`): cap on tool-call loops per user message (default 50).
+- **API key**: read from the environment variable specified by the provider (e.g., `OPENCODE_API_KEY` for `opencode-go`).
 
 ## Future Ideas & Improvements
 
 ### Short-term
 
-- **Config file** (TOML/YAML) for provider, model, and API key selection instead of hardcoded values.
-- **Configurable max iterations** — allow users to set a limit per prompt via a flag.
-- **Multiple provider support** — let the user pick from any provider in the catalog at runtime.
+- **Config file** (TOML/YAML) for persistent configuration beyond CLI flags.
 - **Conversation history** — persist sessions to disk so you can resume later.
 - **Streaming improvements** — handle very long lines from some providers (the scanner default buffer may be too small).
 

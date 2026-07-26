@@ -60,17 +60,6 @@ linters:
           - errcheck
           - gosec
           - unparam
-      # tea.Model interface methods (Init/Update/View) have fixed signatures;
-      # don't nag about unused params/returns there
-      - path: (tui|ui)/.*\.go
-        linters:
-          - unparam
-      # The Model struct carries channels and a run handle; gocritic's
-      # hugeParam check fires on the constructor. Suppress only that.
-      - path: (tui|ui)/.*\.go
-        linters:
-          - gocritic
-        text: hugeParam
 
 formatters:
   enable:
