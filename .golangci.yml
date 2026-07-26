@@ -6,22 +6,22 @@ run:
 linters:
   default: standard
   enable:
-    - errcheck        # unchecked errors — real bugs
-    - govet           # suspicious constructs (includes lostcancel, loopclosure, atomic)
-    - staticcheck     # SA* checks, deprecated API usage, simplifications
-    - unused          # dead code
-    - ineffassign     # ineffectual assignments
-    - bodyclose       # unclosed HTTP response bodies (model API calls)
-    - errorlint       # errors.Is/As correctness, wrapped-error checks
-    - copyloopvar     # Go 1.22+ loop var capture bugs
-    - gosec           # security issues (tuned below)
-    - noctx           # missing context.Context on http calls
-    - unconvert       # unnecessary type conversions
-    - unparam         # unused function parameters/returns
-    - misspell        # comments/strings typos
-    - contextcheck    # ensures context is propagated, not silently dropped/re-created
-    - containedctx    # flags context.Context stored in a struct field instead of passed explicitly
-    - gocritic        # broad checks; tuned to diagnostic/performance tags below
+    - errcheck # unchecked errors — real bugs
+    - govet # suspicious constructs (includes lostcancel, loopclosure, atomic)
+    - staticcheck # SA* checks, deprecated API usage, simplifications
+    - unused # dead code
+    - ineffassign # ineffectual assignments
+    - bodyclose # unclosed HTTP response bodies (model API calls)
+    - errorlint # errors.Is/As correctness, wrapped-error checks
+    - copyloopvar # Go 1.22+ loop var capture bugs
+    - gosec # security issues (tuned below)
+    - noctx # missing context.Context on http calls
+    - unconvert # unnecessary type conversions
+    - unparam # unused function parameters/returns
+    - misspell # comments/strings typos
+    - contextcheck # ensures context is propagated, not silently dropped/re-created
+    - containedctx # flags context.Context stored in a struct field instead of passed explicitly
+    - gocritic # broad checks; tuned to diagnostic/performance tags below
 
   settings:
     errcheck:
@@ -31,21 +31,21 @@ linters:
     staticcheck:
       checks:
         - all
-        - -ST1000  # package comment requirement — skip for CLI code
+        - -ST1000 # package comment requirement — skip for CLI code
 
     gosec:
       excludes:
-        - G104  # duplicate of errcheck
-        - G304  # "file path from variable" — too noisy for a CLI that takes paths as args
+        - G104 # duplicate of errcheck
+        - G304 # "file path from variable" — too noisy for a CLI that takes paths as args
 
     unparam:
-      check-exported: false  # only flag unused params on unexported funcs
+      check-exported: false # only flag unused params on unexported funcs
 
     gocritic:
       disabled-checks:
-        - ifElseChain     # style-only, common in bubbletea Update() switch/if chains
+        - ifElseChain # style-only, common in bubbletea Update() switch/if chains
       enabled-tags:
-        - diagnostic      # catches real bugs: nil maps, sprintf mistakes, etc.
+        - diagnostic # catches real bugs: nil maps, sprintf mistakes, etc.
         - performance
       # explicitly not enabling "style" or "opinionated" tags — that's the noisy stuff
 
@@ -65,6 +65,12 @@ linters:
       - path: (tui|ui)/.*\.go
         linters:
           - unparam
+      # The Model struct carries channels and a run handle; gocritic's
+      # hugeParam check fires on the constructor. Suppress only that.
+      - path: (tui|ui)/.*\.go
+        linters:
+          - gocritic
+        text: hugeParam
 
 formatters:
   enable:

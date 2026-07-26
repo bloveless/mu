@@ -87,7 +87,7 @@ func (t *Terminal) Handle(ev events.Event) {
 	case events.KindToolProgress:
 		tol("%s\n", ev.Text)
 	case events.KindToolResult:
-		trl("%s\n", truncateLines(ev.Text, toolResultMaxLines))
+		trl("%s\n", TruncateLines(ev.Text, toolResultMaxLines))
 	case events.KindMessageEnd:
 		l("\n")
 	case events.KindUserMessage:
@@ -110,12 +110,10 @@ func (t *Terminal) Handle(ev events.Event) {
 	t.last[agentID] = ev.Kind
 }
 
-// truncateLines returns s unchanged when it has maxLines or fewer lines;
-// otherwise it returns a "… (N more lines)" indicator followed by the last
-// truncateLines removes trailing newlines and limits output to the final maxLines lines.
-// It returns "(no output)" for empty input and prefixes truncated output with the number
-// of hidden lines.
-func truncateLines(s string, maxLines int) string {
+// TruncateLines removes trailing newlines and limits output to the final
+// maxLines lines. It returns "(no output)" for empty input and prefixes
+// truncated output with the number of hidden lines.
+func TruncateLines(s string, maxLines int) string {
 	s = strings.TrimRight(s, "\n")
 	if s == "" {
 		return "(no output)"

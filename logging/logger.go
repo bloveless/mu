@@ -2,6 +2,7 @@ package logging
 
 import (
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -20,6 +21,16 @@ const (
 )
 
 var verbose bool
+
+// errOut is where the stderr-bound helpers write. It is os.Stderr unless
+// redirected (TUI mode redirects it to a file so log output can't garble
+// the render region).
+var errOut io.Writer = os.Stderr
+
+// SetErrorOutput redirects the stderr-bound helpers (Error, Info, Debug).
+func SetErrorOutput(w io.Writer) {
+	errOut = w
+}
 
 // SetVerbose sets the verbose flag to enable verbose logging. This acts at the package level and affects all log calls.
 func SetVerbose(v bool) {
@@ -64,12 +75,12 @@ func UsageLog(msg string, args ...any) {
 
 // Error prints error logs to stderr
 func Error(msg string, args ...any) {
-	fmt.Fprintf(os.Stderr, msg, args...)
+	fmt.Fprintf(errOut, msg, args...)
 }
 
 // Info prints info logs to stderr
 func Info(msg string, args ...any) {
-	fmt.Fprintf(os.Stderr, msg, args...)
+	fmt.Fprintf(errOut, msg, args...)
 }
 
 // WarningLog prints warning messages to stdout in orange.
@@ -80,6 +91,6 @@ func WarningLog(msg string, args ...any) {
 // Debug prints debug logs to stderr
 func Debug(msg string, args ...any) {
 	if verbose {
-		fmt.Fprintf(os.Stderr, msg, args...)
+		fmt.Fprintf(errOut, msg, args...)
 	}
 }

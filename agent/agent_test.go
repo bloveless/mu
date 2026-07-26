@@ -129,6 +129,75 @@ func TestPipelineSmoke(t *testing.T) {
 	}
 }
 
+// TestReasoningOnlyStreamSucceeds verifies that a provider stream containing
+// only reasoning_content (zero content, zero tool calls) with a finish
+// reason does not crash the agent; it is treated as an empty assistant
+// response that ends the turn normally.
+func TestReasoningOnlyStreamSucceeds(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		w.Header().Set("Content-Type", "text/event-stream")
+		chunks := []string{
+			`{"choices":[{"delta":{"reasoning_content":"thinking..."}}]}`,
+			`{"choices":[{"delta":{"reasoning_content":" more thinking"},"finish_reason":"stop"}]}`,
+			`{"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
+		}
+		for _, c := range chunks {
+			fmt.Fprintf(w, "data: %s\n\n", c)
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	baseURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parsing test server URL: %v", err)
+	}
+
+	eventCh := make(chan events.Event, 64)
+	a := agent.Agent{
+		ID:            "root",
+		Client:        api.NewClient(baseURL, "test-key"),
+		MaxIterations: 50,
+		Model:         api.ProviderModel{},
+		ToolsRegistry: tools.NewRegistry(),
+		SystemPrompt:  "you are a test",
+		Events:        eventCh,
+	}
+
+	var got []events.Event
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for ev := range eventCh {
+			got = append(got, ev)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	session := a.NewSession(ctx)
+	if err := session.ExecutePrompt(ctx, "hi"); err != nil {
+		t.Fatalf("ExecutePrompt returned error on reasoning-only stream: %v", err)
+	}
+
+	close(eventCh)
+	<-drained
+
+	// Verify: thinking deltas and usage arrived; no content deltas, no
+	// error event.
+	if len(got) != 3 {
+		t.Fatalf("got %d events %v, want 3 (2\u00d7 thinking + usage)", len(got), kinds(got))
+	}
+	if got[0].Kind != events.KindThinkingDelta || got[1].Kind != events.KindThinkingDelta {
+		t.Errorf("first two events should be thinking deltas, got %v %v", got[0].Kind, got[1].Kind)
+	}
+	if got[2].Kind != events.KindUsage {
+		t.Errorf("last event should be usage, got %v", got[2].Kind)
+	}
+}
+
 func kinds(evs []events.Event) []events.Kind {
 	ks := make([]events.Kind, len(evs))
 	for i, ev := range evs {
