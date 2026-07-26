@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/bloveless/mu/logging"
 )
@@ -25,10 +24,10 @@ type Client struct {
 // NewClient creates a new API client with the given base URL and API key.
 func NewClient(baseURL *url.URL, apiKey string) Client {
 	return Client{
-		baseURL: baseURL,
-		apiKey:  apiKey,
+		baseURL:    baseURL,
+		apiKey:     apiKey,
 		httpClient: &http.Client{
-			Timeout: 5 * time.Minute,
+			// Timeout: 5 * time.Minute, // We can't be sure how long the response is going to take, very thoughtful responses and thinking can take a very long time
 		},
 	}
 }

@@ -192,6 +192,14 @@ func (s *Session) streamIteration(
 	}
 	calls := stream.ToolCalls()
 	if agentResponse.Len() == 0 && len(calls) == 0 {
+		// Some reasoning models return their entire response as
+		// ReasoningContent with zero Content. When the stream
+		// ended normally (finishReason is set), accept it as an
+		// empty assistant message so the turn ends gracefully
+		// instead of crashing the program.
+		if finishReason != "" {
+			return api.Message{Role: api.RoleAssistant}, nil
+		}
 		return api.Message{}, fmt.Errorf("iteration %d: provider returned an empty response", iteration)
 	}
 	return api.Message{

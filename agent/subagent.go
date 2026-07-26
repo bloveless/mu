@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/tidwall/gjson"
+
 	"github.com/bloveless/mu/api"
 	"github.com/bloveless/mu/events"
 	"github.com/bloveless/mu/tools"
-	"github.com/tidwall/gjson"
 )
 
 // SubagentTool creates a tool that spawns a synchronous child agent. The

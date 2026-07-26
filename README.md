@@ -44,6 +44,7 @@ You'll be dropped into a REPL. Type your prompts and watch the agent work.
 | Flag | Description |
 |------|-------------|
 | `-v` | Enable verbose/debug logging to stderr |
+| `-cli` | Use the plain terminal CLI instead of the Bubble Tea TUI |
 
 ## How It Works
 
