@@ -64,7 +64,7 @@ func FormatUsageLine(usage *api.Usage, model *api.ProviderModel, cumulativeCost 
 		cacheHitRate,
 		cumulativeCost,
 		contextPercent,
-		formatTokens(uint32(model.Limit.Context)),
+		formatTokens(uint32(min(math.MaxUint32, model.Limit.Context))), //nolint:gosec // value is clamped to uint32 max
 	)
 }
 

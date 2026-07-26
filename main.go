@@ -37,10 +37,10 @@ func main() {
 	verbose := flag.Bool("v", false, "enable debug logging")
 	cliMode := flag.Bool("cli", false, "use the plain terminal CLI instead of the TUI")
 	provider := flag.String("provider", "opencode-go", "provider to use")
-	model := flag.String("model", "deepseek-v4-pro", "model to use")
+	model := flag.String("model", "mimo-v2.5-pro", "model to use")
 	maxIterations := flag.Int("max-iterations", 50, "maximum number of iterations per user message")
-	subagentProvider := flag.String("subagent-provider", "opencode", "provider for sub-agent model")
-	subagentModel := flag.String("subagent-model", "deepseek-v4-flash-free", "model for sub-agent")
+	subagentProvider := flag.String("subagent-provider", "opencode-go", "provider for sub-agent model")
+	subagentModel := flag.String("subagent-model", "mimo-v2.5", "model for sub-agent")
 	flag.Parse()
 
 	if err := run(*verbose, *cliMode, *provider, *model, *subagentProvider, *subagentModel, *maxIterations); err != nil {

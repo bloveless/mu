@@ -10,7 +10,7 @@ import (
 	"github.com/bloveless/mu/events"
 )
 
-func newTestModel() (Model, chan string, *RunHandle) {
+func newTestModel() (*Model, chan string, *RunHandle) {
 	inputCh := make(chan string, 1)
 	eventCh := make(chan events.Event, 1)
 	run := &RunHandle{}
@@ -21,7 +21,7 @@ func newTestModel() (Model, chan string, *RunHandle) {
 	return m, inputCh, run
 }
 
-func newTestModelWithCh() (Model, chan string, chan events.Event, *RunHandle) {
+func newTestModelWithCh() (*Model, chan string, chan events.Event, *RunHandle) {
 	inputCh := make(chan string, 1)
 	eventCh := make(chan events.Event, 1)
 	run := &RunHandle{}
@@ -122,7 +122,7 @@ func TestSubagentBlock(t *testing.T) {
 
 	// The root result line itself should not carry bg.  It appears after
 	// the reset line, so check that the final line is bg-free.
-	lines := strings.Split(history, "\n")
+	lines := strings.Split(strings.TrimRight(history, "\n"), "\n")
 	lastLine := lines[len(lines)-1]
 	mustNotContain(t, lastLine, subagentBgCode, "last (root) line should not carry subagent bg")
 }
@@ -191,7 +191,7 @@ func TestEnterSubmits(t *testing.T) {
 	m, inputCh, _ := newTestModel()
 	m.textarea.SetValue("hello world")
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if got := updated.(Model).textarea.Value(); got != "" {
+	if got := updated.(*Model).textarea.Value(); got != "" {
 		t.Fatalf("expected textarea cleared, got %q", got)
 	}
 	if cmd == nil {
@@ -208,7 +208,7 @@ func TestEnterSubmits(t *testing.T) {
 		t.Fatal("expected input sent to inputCh")
 	}
 	// Echo line is in history.
-	mustContain(t, updated.(Model).historyString(), "> hello world", "history missing echo line")
+	mustContain(t, updated.(*Model).historyString(), "> hello world", "history missing echo line")
 }
 
 func TestEnterOnEmptyInputDoesNothing(t *testing.T) {
@@ -250,7 +250,7 @@ func TestShiftEnterAndAltEnterInsertNewline(t *testing.T) {
 		m, _, _ := newTestModel()
 		m.textarea.SetValue("line1")
 		updated, _ := m.Update(key)
-		if got := updated.(Model).textarea.Value(); !strings.Contains(got, "\n") {
+		if got := updated.(*Model).textarea.Value(); !strings.Contains(got, "\n") {
 			t.Fatalf("expected %q to insert newline, got %q", key.String(), got)
 		}
 	}
@@ -259,7 +259,7 @@ func TestShiftEnterAndAltEnterInsertNewline(t *testing.T) {
 func TestWindowSizeUpdatesWidth(t *testing.T) {
 	m, _, _ := newTestModel()
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 123, Height: 50})
-	um := updated.(Model)
+	um := updated.(*Model)
 	if um.width != 123 {
 		t.Fatalf("expected width 123, got %d", um.width)
 	}
@@ -320,11 +320,31 @@ func TestEventMsgReturnsCmd(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd (re-armed awaitEvent)")
 	}
-	// Drain the channel to prove the cmd is a read.
-	go func() { eventCh <- events.Event{AgentID: "root", Kind: events.KindUsage, Text: ""} }()
+	// Send a buffered event synchronously, execute the cmd, and assert
+	// it delivers the event as an eventMsg.
+	eventCh <- events.Event{AgentID: "root", Kind: events.KindUsage, Text: "↑1 ↓2"}
+	msg := cmd()
+	got, ok := msg.(eventMsg)
+	if !ok {
+		t.Fatalf("expected eventMsg, got %T", msg)
+	}
+	if got.Kind != events.KindUsage || got.Text != "↑1 ↓2" {
+		t.Fatalf("unexpected eventMsg: kind=%v text=%q", got.Kind, got.Text)
+	}
+	// Now exercise the scrollback scenario (event producing a history
+	// flush) and verify the re-armed cmd likewise delivers the next event.
+	eventCh <- events.Event{AgentID: "root", Kind: events.KindContentDelta, Text: "world\n"}
 	_, cmd = m.Update(eventMsg(events.Event{AgentID: "root", Kind: events.KindContentDelta, Text: "hello\n"}))
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd for event producing scrollback")
+	}
+	msg = cmd()
+	got, ok = msg.(eventMsg)
+	if !ok {
+		t.Fatalf("expected eventMsg from scrollback cmd, got %T", msg)
+	}
+	if got.Kind != events.KindContentDelta || got.Text != "world\n" {
+		t.Fatalf("unexpected eventMsg from scrollback cmd: kind=%v text=%q", got.Kind, got.Text)
 	}
 }
 

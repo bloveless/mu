@@ -98,7 +98,7 @@ type Model struct {
 // NewModel creates the TUI model. inputCh carries submitted prompts to the
 // agent loop; eventCh delivers agent display events; run lets ctrl+c cancel
 // the in-flight turn; prompt is the input prompt string.
-func NewModel(inputCh chan<- string, eventCh <-chan events.Event, run *RunHandle, prompt string) Model {
+func NewModel(inputCh chan<- string, eventCh <-chan events.Event, run *RunHandle, prompt string) *Model {
 	ta := textarea.New()
 	s := ta.Styles()
 	s.Focused.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
@@ -115,7 +115,7 @@ func NewModel(inputCh chan<- string, eventCh <-chan events.Event, run *RunHandle
 	vp := viewport.New()
 	vp.SoftWrap = true
 
-	return Model{
+	return &Model{
 		inputCh:        inputCh,
 		eventCh:        eventCh,
 		run:            run,
@@ -130,7 +130,7 @@ func NewModel(inputCh chan<- string, eventCh <-chan events.Event, run *RunHandle
 }
 
 // Init starts the event pump.
-func (m Model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 	return awaitEvent(m.eventCh)
 }
 
@@ -331,7 +331,7 @@ func (m *Model) footerView() string {
 // one-line input, and the usage footer.  The live streaming tail is
 // included in the viewport content so it stays in place when it
 // graduates to completed history.
-func (m Model) View() tea.View {
+func (m *Model) View() tea.View {
 	var b strings.Builder
 	b.WriteString(m.viewport.View())
 	b.WriteByte('\n')
@@ -356,13 +356,13 @@ func (m *Model) syncViewportSize() {
 
 // historyString is a value-receiver helper so callers with non-addressable
 // Model values (e.g. type-assertion results) can read the scrollback.
-func (m Model) historyString() string { return m.history.String() }
+func (m *Model) historyString() string { return m.history.String() }
 
 // Update handles tea messages: agent events, window resizes, and keyboard
 // input.  Keys we don't intercept are delegated to the textarea (which
 // inserts newlines on shift+enter/alt+enter and handles paste) and to the
 // viewport (which handles pgup/pgdn/mouse-wheel scrolling).
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
@@ -398,7 +398,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // sendCmd returns a command that writes text to the agent input channel.
-func (m Model) sendCmd(text string) tea.Cmd {
+func (m *Model) sendCmd(text string) tea.Cmd {
 	ch := m.inputCh
 	return func() tea.Msg { ch <- text; return nil }
 }
@@ -408,14 +408,13 @@ func (m Model) sendCmd(text string) tea.Cmd {
 func (m *Model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.textarea.Value())
 	if text == "" {
-		return *m, nil
+		return m, nil
 	}
 	m.textarea.Reset()
-	for _, line := range m.submitLines(text) {
-		m.appendHistory(line)
-	}
+	m.flush()
+	m.appendHistory(promptStyle.Render("> " + text))
 	m.refreshViewport()
-	return *m, m.sendCmd(text)
+	return m, m.sendCmd(text)
 }
 
 // submitLines returns the scrollback lines for a submit: any in-progress
