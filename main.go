@@ -67,7 +67,9 @@ func run(verbose, cliMode bool, provider, model, subagentProvider, subagentModel
 	}
 
 	prompt := fmt.Sprintf("%s:%s > ", provider, model)
-	if cliMode || !term.IsTerminal(int(os.Stdin.Fd())) {
+	if cliMode ||
+		!term.IsTerminal(int(os.Stdin.Fd())) ||
+		!term.IsTerminal(int(os.Stdout.Fd())) {
 		return runCLI(ctx, a, eventCh, prompt)
 	}
 

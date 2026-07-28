@@ -411,8 +411,9 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 	m.textarea.Reset()
-	m.flush()
-	m.appendHistory(promptStyle.Render("> " + text))
+	for _, line := range m.submitLines(text) {
+		m.appendHistory(line)
+	}
 	m.refreshViewport()
 	return *m, m.sendCmd(text)
 }

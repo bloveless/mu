@@ -197,7 +197,7 @@ func (s *Session) streamIteration(
 		// ended normally (finishReason is set), accept it as an
 		// empty assistant message so the turn ends gracefully
 		// instead of crashing the program.
-		if finishReason != "" {
+		if finishReason == "stop" {
 			return api.Message{Role: api.RoleAssistant}, nil
 		}
 		return api.Message{}, fmt.Errorf("iteration %d: provider returned an empty response", iteration)
