@@ -1,0 +1,27 @@
+[
+    {
+        "input": "What files are in the current directory?",
+        "expected_tool": "list_files"
+    },
+    {
+        "input": "Show me the contents of src/main.rs",
+        "expected_tool": "read_file"
+    },
+    {
+        "input": "Read the Cargo.toml file",
+        "expected_tool": "read_file",
+        "secondary_tools": ["list_files"]
+    },
+    {
+        "input": "What is Rust?",
+        "expected_tool": "none"
+    },
+    {
+        "input": "Tell me a joke",
+        "expected_tool": "none"
+    },
+    {
+        "input": "List everything in the src directory",
+        "expected_tool": "list_files"
+    }
+]

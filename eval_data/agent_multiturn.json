@@ -1,0 +1,17 @@
+[
+    {
+        "input": "What files are in this project?",
+        "expected_tools": ["list_files"],
+        "expected_content": "The project contains Cargo.toml, README.md, and a src directory"
+    },
+    {
+        "input": "Read the Cargo.toml and tell me the project name",
+        "expected_tools": ["read_file"],
+        "expected_content": "The project is named agents-v2"
+    },
+    {
+        "input": "List all files then read main.rs",
+        "expected_tools": ["list_files", "read_file"],
+        "expected_content": "main.rs contains a Hello World program"
+    }
+]
