@@ -1,12 +1,13 @@
-use std::future::pending;
-
 use anyhow::Result;
 use serde_json::Value;
 
 use crate::agent::system_prompt::SYSTEM_PROMPT;
-use crate::agent::tool_registry::{Tool, ToolRegistry};
+use crate::agent::tool_registry::ToolRegistry;
 use crate::api::client::OpenAIClient;
 use crate::api::types::{ChatCompletionRequest, FunctionCall, Message, ToolCall, ToolDefinition};
+use crate::context::compaction::compact_conversation;
+use crate::context::model_limits::{get_token_usage, should_compact};
+use crate::context::token_estimator::estimate_conversation_tokens;
 
 /// Accumulated state for a tool call being streamed.
 #[derive(Debug, Clone)]
@@ -22,6 +23,7 @@ pub struct AgentCallbacks {
     pub on_tool_call_start: Box<dyn FnMut(&str, &Value)>,
     pub on_tool_call_end: Box<dyn FnMut(&str, &str)>,
     pub on_complete: Box<dyn FnMut(&str)>,
+    pub on_token_usage: Box<dyn FnMut(crate::context::model_limits::TokenUsageInfo)>,
 }
 
 /// Run the agent loop
@@ -44,6 +46,20 @@ pub async fn run_agent(
     messages.push(Message::user(user_message));
 
     loop {
+        // Check context usage
+        let token_count = estimate_conversation_tokens(&messages);
+        let model = "mimo-v2.5-pro";
+
+        let usage = get_token_usage(token_count, model);
+        (callbacks.on_token_usage)(usage);
+
+        if should_compact(token_count, model) {
+            messages = compact_conversation(client, &messages).await?;
+
+            // Re-add the latest user message if compaction removed it
+            // (The user's most recent message is important context)
+        }
+
         // --- Accumulation state for this iteration ---
         let mut text_content = String::new();
         let mut pending_tools: Vec<PendingToolCall> = Vec::new();
@@ -150,7 +166,7 @@ pub async fn run_agent(
 
             (callbacks.on_tool_call_start)(&pt.name, &args);
 
-            let result = registry.execute(&pt.name, args)?;
+            let result = registry.execute(&pt.name, args).await?;
 
             (callbacks.on_tool_call_end)(&pt.name, &result);
 

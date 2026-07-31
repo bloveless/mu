@@ -1,5 +1,6 @@
 mod agent;
 mod api;
+mod context;
 mod eval;
 mod tools;
 
@@ -11,7 +12,10 @@ use crate::{
         run::{AgentCallbacks, run_agent},
         tool_registry::ToolRegistry,
     },
-    tools::file::{DeleteFileTool, WriteFileTool},
+    tools::{
+        file::{DeleteFileTool, WriteFileTool},
+        web_search::WebSearchTool,
+    },
 };
 use tools::file::{ListFilesTool, ReadFileTool};
 
@@ -29,6 +33,7 @@ async fn main() -> Result<()> {
     registry.register(Box::new(ListFilesTool));
     registry.register(Box::new(WriteFileTool));
     registry.register(Box::new(DeleteFileTool));
+    registry.register(Box::new(WebSearchTool));
 
     let definitions = registry.definitions();
 
@@ -42,10 +47,12 @@ async fn main() -> Result<()> {
         on_complete: Box::new(|_| {
             println!();
         }),
+        on_token_usage: Box::new(|_| {}),
     };
 
     let messages = run_agent(
-        "Create a file called test.txt with ‘Hello from the agent’, then read it back to verify.",
+        // "Create a file called test.txt with ‘Hello from the agent’, then read it back to verify.",
+        "Search the web for https://crates.io/crates/raylib and give me a summary of the library.",
         Vec::new(),
         &client,
         &registry,

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 
 use crate::agent::system_prompt::SYSTEM_PROMPT;
-use crate::agent::tool_registry::{Tool, ToolRegistry};
+use crate::agent::tool_registry::ToolRegistry;
 use crate::api::client::OpenAIClient;
 use crate::api::types::{ChatCompletionRequest, Message, ToolDefinition};
 
@@ -54,6 +54,7 @@ pub async fn run_multi_turn(
         }),
         on_tool_call_end: Box::new(|_, _| {}),
         on_complete: Box::new(|_| {}),
+        on_token_usage: Box::new(|_| {}),
     };
 
     crate::agent::run::run_agent(input, Vec::new(), client, registry, tools, &mut callbacks)

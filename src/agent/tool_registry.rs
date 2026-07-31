@@ -1,10 +1,11 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
-
 use crate::api::types::ToolDefinition;
 
-pub trait Tool: Send + Sync {
+#[async_trait]
+pub trait Tool {
     /// The tool's name (matches the API).
     fn name(&self) -> &str;
 
@@ -12,7 +13,7 @@ pub trait Tool: Send + Sync {
     fn definition(&self) -> ToolDefinition;
 
     /// Execute the tool with the given arguments.
-    fn execute(&self, args: Value) -> Result<String>;
+    async fn execute(&self, args: Value) -> Result<String>;
 
     /// Whether this tool requires human approval before execution.
     /// Override the return type for dangerous tools.
@@ -42,9 +43,9 @@ impl ToolRegistry {
     }
 
     /// Execute the tool by name.
-    pub fn execute(&self, name: &str, args: Value) -> Result<String> {
+    pub async fn execute(&self, name: &str, args: Value) -> Result<String> {
         match self.tools.get(name) {
-            Some(tool) => tool.execute(args),
+            Some(tool) => tool.execute(args).await,
             None => Ok(format!("Unknown tool: {}", name)),
         }
     }

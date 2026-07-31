@@ -1,4 +1,5 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -32,6 +33,7 @@ impl MockTool {
     }
 }
 
+#[async_trait]
 impl Tool for MockTool {
     fn name(&self) -> &str {
         &self.tool_name
@@ -48,7 +50,7 @@ impl Tool for MockTool {
         }
     }
 
-    fn execute(&self, args: Value) -> Result<String> {
+    async fn execute(&self, args: Value) -> Result<String> {
         // Check each response pattern against the args
         let args_str = args.to_string();
         for (pattern, response) in &self.responses {

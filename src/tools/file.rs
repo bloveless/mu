@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use serde_json::{Value, json};
-use std::fs;
+use tokio::fs;
 
 use crate::agent::tool_registry::Tool;
 use crate::api::types::{FunctionDefinition, ToolDefinition};
@@ -9,6 +10,7 @@ use crate::api::types::{FunctionDefinition, ToolDefinition};
 
 pub struct ReadFileTool;
 
+#[async_trait]
 impl Tool for ReadFileTool {
     fn name(&self) -> &str {
         "read_file"
@@ -36,10 +38,10 @@ impl Tool for ReadFileTool {
         }
     }
 
-    fn execute(&self, args: Value) -> Result<String> {
+    async fn execute(&self, args: Value) -> Result<String> {
         let path = args["path"].as_str().context("Missing 'path' argument")?;
 
-        match fs::read_to_string(path) {
+        match fs::read_to_string(path).await {
             Ok(contents) => Ok(contents),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 Ok(format!("Error: File not found: {path}"))
@@ -53,6 +55,7 @@ impl Tool for ReadFileTool {
 
 pub struct ListFilesTool;
 
+#[async_trait]
 impl Tool for ListFilesTool {
     fn name(&self) -> &str {
         "list_files"
@@ -80,15 +83,14 @@ impl Tool for ListFilesTool {
         }
     }
 
-    fn execute(&self, args: Value) -> Result<String> {
+    async fn execute(&self, args: Value) -> Result<String> {
         let directory = args["directory"].as_str().unwrap_or(".");
 
-        match fs::read_dir(directory) {
-            Ok(entries) => {
+        match fs::read_dir(directory).await {
+            Ok(mut entries) => {
                 let mut items: Vec<String> = Vec::new();
-                for entry in entries {
-                    let entry = entry?;
-                    let file_type = if entry.file_type()?.is_dir() {
+                while let Some(entry) = entries.next_entry().await? {
+                    let file_type = if entry.file_type().await?.is_dir() {
                         "[dir]"
                     } else {
                         "[file]"
@@ -115,6 +117,7 @@ impl Tool for ListFilesTool {
 
 pub struct WriteFileTool;
 
+#[async_trait]
 impl Tool for WriteFileTool {
     fn name(&self) -> &str {
         "write_file"
@@ -147,7 +150,7 @@ impl Tool for WriteFileTool {
         }
     }
 
-    fn execute(&self, args: Value) -> Result<String> {
+    async fn execute(&self, args: Value) -> Result<String> {
         let path = args["path"].as_str().context("Missing 'path' argument")?;
         let content = args["content"]
             .as_str()
@@ -156,11 +159,13 @@ impl Tool for WriteFileTool {
         // Create parent directories
         if let Some(parent) = std::path::Path::new(path).parent() {
             if !parent.exists() {
-                fs::create_dir_all(parent).context("Failed to create parent directories")?;
+                fs::create_dir_all(parent)
+                    .await
+                    .context("Failed to create parent directories")?;
             }
         }
 
-        match fs::write(path, content) {
+        match fs::write(path, content).await {
             Ok(()) => Ok(format!(
                 "Successfully wrote {} bytes to {path}",
                 content.len()
@@ -178,6 +183,7 @@ impl Tool for WriteFileTool {
 
 pub struct DeleteFileTool;
 
+#[async_trait]
 impl Tool for DeleteFileTool {
     fn name(&self) -> &str {
         "delete_file"
@@ -203,10 +209,10 @@ impl Tool for DeleteFileTool {
         }
     }
 
-    fn execute(&self, args: Value) -> Result<String> {
+    async fn execute(&self, args: Value) -> Result<String> {
         let path = args["path"].as_str().context("Missing 'path' argument")?;
 
-        match fs::remove_file(path) {
+        match fs::remove_file(path).await {
             Ok(()) => Ok(format!("Successfully deleted {path}")),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 Ok(format!("Error: File not found: {path}"))

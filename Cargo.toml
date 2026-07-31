@@ -47,3 +47,4 @@ dotenvy = "0.15"
 
 # Streaming
 futures-util = "0.3"
+async-trait = "0.1.91"
