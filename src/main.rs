@@ -13,6 +13,7 @@ use crate::{
         tool_registry::ToolRegistry,
     },
     tools::{
+        fetch::FetchTool,
         file::{DeleteFileTool, WriteFileTool},
         web_search::WebSearchTool,
     },
@@ -24,6 +25,8 @@ async fn main() -> Result<()> {
     dotenvy::dotenv()?;
 
     let api_key = std::env::var("OPENCODE_API_KEY").expect("OPENCODE_API_KEY must be set");
+    let firecrawl_api_key =
+        std::env::var("FIRECRAWL_API_KEY").expect("FIRECRAWL_API_KEY must be set");
 
     let client = OpenAIClient::new(api_key);
 
@@ -33,7 +36,8 @@ async fn main() -> Result<()> {
     registry.register(Box::new(ListFilesTool));
     registry.register(Box::new(WriteFileTool));
     registry.register(Box::new(DeleteFileTool));
-    registry.register(Box::new(WebSearchTool));
+    registry.register(Box::new(WebSearchTool::new(firecrawl_api_key.clone())));
+    registry.register(Box::new(FetchTool::new(firecrawl_api_key)));
 
     let definitions = registry.definitions();
 
@@ -52,7 +56,8 @@ async fn main() -> Result<()> {
 
     let messages = run_agent(
         // "Create a file called test.txt with ‘Hello from the agent’, then read it back to verify.",
-        "Search the web for https://crates.io/crates/raylib and give me a summary of the library.",
+        "Search the web for rust raylib and give me some suggestions.",
+        // "Fetch the content of https://crates.io/crates/raylib and give me an overview of what it does.",
         Vec::new(),
         &client,
         &registry,

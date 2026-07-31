@@ -1,11 +1,44 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::agent::tool_registry::Tool;
 use crate::api::types::{FunctionDefinition, ToolDefinition};
+use reqwest::Client;
 
-pub struct WebSearchTool;
+pub struct WebSearchTool {
+    client: Client,
+    firecrawl_api_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WebSearchResponse {
+    success: bool,
+    data: WebSearchResponseData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WebSearchResponseData {
+    web: Vec<WebSearchResult>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WebSearchResult {
+    title: Option<String>,
+    description: Option<String>,
+    markdown: Option<String>,
+    url: String,
+}
+
+impl WebSearchTool {
+    pub fn new(firecrawl_api_key: String) -> Self {
+        Self {
+            client: Client::new(),
+            firecrawl_api_key,
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for WebSearchTool {
@@ -38,9 +71,43 @@ impl Tool for WebSearchTool {
         }
     }
 
-    async fn execute(&self, _args: Value) -> Result<String> {
-        // Web search is a provider tool - it is executed server-side.
-        // This method is never called directly.
-        Ok("Web search is handled by the API provider.".into())
+    async fn execute(&self, args: Value) -> Result<String> {
+        let query = args["query"].as_str().context("Missing 'query' argument")?;
+
+        // Use the Firecrawl API to perform the web search
+        let response = self
+            .client
+            .post(&format!("https://api.firecrawl.dev/v2/search"))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.firecrawl_api_key),
+            )
+            .header("Content-Type", "application/json")
+            .json(&json!({
+                "query": query,
+                "sources": [
+                    "web",
+                ],
+                "categories": [],
+                "limit": 10,
+                "scrapeOptions": {
+                    "onlyMainContent": true,
+                    "parsers": [
+                        "pdf",
+                    ],
+                    "formats": [
+                        "markdown",
+                    ],
+                },
+            }))
+            .send()
+            .await
+            .context("Failed to perform web search with firecrawl")?
+            .json::<WebSearchResponse>()
+            .await
+            .context("Failed to parse web search response")?;
+
+        Ok(serde_json::to_string(&response.data)
+            .context("Failed to serialize web search response")?)
     }
 }
