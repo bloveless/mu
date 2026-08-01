@@ -1,0 +1,50 @@
+[package]
+name = "mu"
+version = "0.1.0"
+edition = "2024"
+default-run = "mu"
+
+[lib]
+name = "mu"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mu"
+path = "src/main.rs"
+
+[[bin]]
+name = "eval-single"
+path = "src/bin/eval_single.rs"
+
+[[bin]]
+name = "eval-multi"
+path = "src/bin/eval_multi.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-std", "process", "io-util"] }
+
+# HTTP client with streaming
+reqwest = { version = "0.13.4", features = ["json", "stream"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Terminal UI (later chapters)
+ratatui = "0.30"
+crossterm = "0.29"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Environment variables
+dotenvy = "0.15"
+
+# Streaming
+futures-util = "0.3"
+async-trait = "0.1.91"
