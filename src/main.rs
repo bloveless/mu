@@ -3,6 +3,9 @@ mod api;
 mod context;
 mod eval;
 mod tools;
+mod ui;
+
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use api::client::OpenAIClient;
@@ -18,6 +21,7 @@ use crate::{
         shell::{CodeExecutionTool, RunCommandTool},
         web_search::WebSearchTool,
     },
+    ui::{app::AppState, bridge::drive_agent},
 };
 use tools::file::{ListFilesTool, ReadFileTool};
 
@@ -29,7 +33,7 @@ async fn main() -> Result<()> {
     let firecrawl_api_key =
         std::env::var("FIRECRAWL_API_KEY").expect("FIRECRAWL_API_KEY must be set");
 
-    let client = OpenAIClient::new(api_key);
+    let client = Arc::new(OpenAIClient::new(api_key));
 
     // Build the tool registry
     let mut registry = ToolRegistry::new();
@@ -42,34 +46,26 @@ async fn main() -> Result<()> {
     registry.register(Box::new(WebSearchTool::new(firecrawl_api_key.clone())));
     registry.register(Box::new(FetchTool::new(firecrawl_api_key)));
 
-    let definitions = registry.definitions();
+    let registry = Arc::new(registry);
+    let definitions = Arc::new(registry.definitions());
 
-    let mut callbacks = AgentCallbacks {
-        on_token: Box::new(|token| print!("{token}")),
-        on_tool_call_start: Box::new(|name, _args| println!("\n[calling: {name}...]")),
-        on_tool_call_end: Box::new(|name, result| {
-            let preview = &result[..result.len().min(100)];
-            println!("[{name} done: {preview}");
-        }),
-        on_complete: Box::new(|_| {
-            println!();
-        }),
-        on_token_usage: Box::new(|_| {}),
-    };
+    let state = Arc::new(Mutex::new(AppState::new()));
 
-    let messages = run_agent(
-        // "Create a file called test.txt with ‘Hello from the agent’, then read it back to verify.",
-        "Search the web for rust raylib and give me some suggestions.",
-        // "Fetch the content of https://crates.io/crates/raylib and give me an overview of what it does.",
+    // Background tokio task: polls state for submissions, drives the agent loop
+    let agent_task = tokio::spawn(drive_agent(
+        Arc::clone(&state),
+        Arc::clone(&client),
+        Arc::clone(&registry),
+        Arc::clone(&definitions),
         Vec::new(),
-        &client,
-        &registry,
-        &definitions,
-        &mut callbacks,
-    )
-    .await?;
+    ));
 
-    println!("\n--- Conversation: {} messages ---", messages.len());
+    // Run the UI on the main thread
+    let ui_state = Arc::clone(&state);
+    let ui_task = tokio::task::spawn_blocking(move || ui::event_loop::run_ui(ui_state));
+
+    // Wait for both tasks to complete
+    tokio::join!(agent_task, ui_task);
 
     Ok(())
 }

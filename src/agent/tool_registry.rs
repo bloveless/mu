@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::api::types::ToolDefinition;
 
 #[async_trait]
-pub trait Tool {
+pub trait Tool: Send + Sync {
     /// The tool's name (matches the API).
     fn name(&self) -> &str;
 
@@ -33,8 +33,7 @@ impl ToolRegistry {
         }
     }
 
-    pub fn register(&mut self, tool: Box<dyn Tool>) {
-        self.tools.insert(tool.name().to_string(), tool);
+    pub fn register(&mut self, tool: Box<dyn Tool>) {        self.tools.insert(tool.name().to_string(), tool);
     }
 
     /// Get all tool definitions for the API.

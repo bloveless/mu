@@ -53,6 +53,7 @@ pub async fn run_multi_turn(
             tool_names_clone.lock().unwrap().push(name.to_string());
         }),
         on_tool_call_end: Box::new(|_, _| {}),
+        on_tool_approval: Box::new(|_, _| true),
         on_complete: Box::new(|_| {}),
         on_token_usage: Box::new(|_| {}),
     };

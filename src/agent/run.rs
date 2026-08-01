@@ -19,11 +19,12 @@ struct PendingToolCall {
 
 /// Callbacks for the agent loop.
 pub struct AgentCallbacks {
-    pub on_token: Box<dyn FnMut(&str)>,
-    pub on_tool_call_start: Box<dyn FnMut(&str, &Value)>,
-    pub on_tool_call_end: Box<dyn FnMut(&str, &str)>,
-    pub on_complete: Box<dyn FnMut(&str)>,
-    pub on_token_usage: Box<dyn FnMut(crate::context::model_limits::TokenUsageInfo)>,
+    pub on_token: Box<dyn FnMut(&str) + Send>,
+    pub on_tool_call_start: Box<dyn FnMut(&str, &Value) + Send>,
+    pub on_tool_call_end: Box<dyn FnMut(&str, &str) + Send>,
+    pub on_complete: Box<dyn FnMut(&str) + Send>,
+    pub on_token_usage: Box<dyn FnMut(crate::context::model_limits::TokenUsageInfo) + Send>,
+    pub on_tool_approval: Box<dyn FnMut(&str, &Value) -> bool + Send>,
 }
 
 /// Run the agent loop
@@ -164,10 +165,20 @@ pub async fn run_agent(
         for pt in &pending_tools {
             let args: Value = serde_json::from_str(&pt.arguments).unwrap_or(Value::Null);
 
+            if registry.requires_approval(&pt.name) {
+                let approved = (callbacks.on_tool_approval)(&pt.name, &args);
+                if !approved {
+                    // User rejected - stop the loop
+                    messages.push(Message::tool_result(
+                        &pt.id,
+                        "Tool execution rejected by the user.",
+                    ));
+                    return Ok(messages);
+                }
+            }
+
             (callbacks.on_tool_call_start)(&pt.name, &args);
-
             let result = registry.execute(&pt.name, args).await?;
-
             (callbacks.on_tool_call_end)(&pt.name, &result);
 
             messages.push(Message::tool_result(&pt.id, &result));
