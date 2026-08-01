@@ -15,6 +15,7 @@ use crate::{
     tools::{
         fetch::FetchTool,
         file::{DeleteFileTool, WriteFileTool},
+        shell::{CodeExecutionTool, RunCommandTool},
         web_search::WebSearchTool,
     },
 };
@@ -36,6 +37,8 @@ async fn main() -> Result<()> {
     registry.register(Box::new(ListFilesTool));
     registry.register(Box::new(WriteFileTool));
     registry.register(Box::new(DeleteFileTool));
+    registry.register(Box::new(RunCommandTool));
+    registry.register(Box::new(CodeExecutionTool));
     registry.register(Box::new(WebSearchTool::new(firecrawl_api_key.clone())));
     registry.register(Box::new(FetchTool::new(firecrawl_api_key)));
 

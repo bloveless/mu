@@ -1,0 +1,19 @@
+[
+    {
+        "input": "Run ls to see files in the current directory",
+        "expected_tool": "run_command"
+    },
+    {
+        "input": "Write a Python script that prints hello world and run it",
+        "expected_tool": "execute_code",
+        "secondary_tools": ["run_command"]
+    },
+    {
+        "input": "Check the git status of this repo",
+        "expected_tool": "run_command"
+    },
+    {
+        "input": "What is 2 + 2?",
+        "expected_tool": "none"
+    }
+]

@@ -66,6 +66,7 @@ impl Tool for FetchTool {
         // Use the Firecrawl API to perform the web search
         let response = self
             .client
+            // TODO: experiment with https://www.tavily.com/
             .post(&format!("https://api.firecrawl.dev/v2/scrape"))
             .header(
                 "Authorization",
