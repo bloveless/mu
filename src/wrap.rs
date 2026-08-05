@@ -72,7 +72,6 @@ fn wrap_single_line(line: &str, width: usize, out: &mut Vec<String>) {
 
         if current_width + sep_width + word_width > width {
             out.push(std::mem::take(&mut current));
-            current_width = 0;
             current.push_str(word);
             current_width = word_width;
         } else {

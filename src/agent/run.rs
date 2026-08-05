@@ -1,4 +1,8 @@
+use std::sync::Arc;
+
 use anyhow::Result;
+use serde_json::Value;
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -6,7 +10,7 @@ use crate::{
     agent::tool_registry::ToolRegistry,
     api::{
         client::OpenAIClient,
-        types::{ChatCompletionRequest, Message},
+        types::{ChatCompletionRequest, FunctionCall, Message, ToolCall},
     },
     events::{AIEvent, AppEvent},
 };
@@ -29,14 +33,12 @@ struct PendingToolCall {
 pub async fn run_agent(
     token: CancellationToken,
     client: OpenAIClient,
-    registry: ToolRegistry,
+    registry: Arc<ToolRegistry>,
     event_tx: std::sync::mpsc::Sender<AppEvent>,
     ai_rx: tokio::sync::mpsc::UnboundedReceiver<AIEvent>,
 ) -> Result<()> {
-    // Clone for the post-agent `Fatal` send; `event_tx` itself moves into
-    // `openai_stuff` so tool tasks can stream results.
     let fatal_events = event_tx.clone();
-    let result = openai_stuff(&token, &client, &registry, event_tx, ai_rx).await;
+    let result = openai_stuff(&token, &client, registry, event_tx, ai_rx).await;
     if let Err(err) = &result {
         // The agent is dying; tell the UI so it can exit with a useful
         // message instead of hanging on the next prompt send.
@@ -48,7 +50,7 @@ pub async fn run_agent(
 async fn openai_stuff(
     token: &CancellationToken,
     client: &OpenAIClient,
-    registry: &ToolRegistry,
+    registry: Arc<ToolRegistry>,
     tx_events: std::sync::mpsc::Sender<AppEvent>,
     mut rx_events: tokio::sync::mpsc::UnboundedReceiver<AIEvent>,
 ) -> Result<()> {
@@ -88,6 +90,7 @@ async fn openai_stuff(
                 };
 
                 let mut finish_reason = None;
+                let mut assistant_message = String::new();
                 let mut pending_tools: Vec<PendingToolCall> = Vec::new();
 
                 let chat_completion_handle = client.chat_completion_stream(request, |chunk| {
@@ -105,6 +108,7 @@ async fn openai_stuff(
                         }
 
                         if let Some(content) = &delta.content {
+                            assistant_message.push_str(content.as_str());
                             tx_events
                                 .send(AppEvent::ChunkReceived(content.clone()))
                                 .ok();
@@ -140,104 +144,103 @@ async fn openai_stuff(
                 });
 
                 tokio::select! {
-                    _ = chat_completion_handle => {},
+                    result = chat_completion_handle => {
+                        if let Err(e) = result {
+                            eprintln!("Chat completion stream error: {e}");
+                        }
+                    },
                     _ = token.cancelled() => break 'turn,
                     _ = turn_token.cancelled() => break 'turn,
                 };
 
-                if finish_reason.as_deref() == Some("stop") {
-                    return Ok(());
+                if !assistant_message.is_empty() || !pending_tools.is_empty() {
+                    let mut msg = Message::assistant(&assistant_message);
+                    let mut tool_calls = vec![];
+                    for tc in &pending_tools {
+                        let tool_call = ToolCall {
+                            id: tc.id.clone(),
+                            call_type: "function".to_string(),
+                            function: FunctionCall {
+                                name: tc.name.clone(),
+                                arguments: tc.arguments.clone(),
+                            },
+                        };
+                        tool_calls.push(tool_call);
+                    }
+                    msg.tool_calls = Some(tool_calls);
+                    messages.push(msg);
                 }
 
-                // let message = choice.message.clone();
+                let mut tool_set = JoinSet::new();
+                for tool_call in pending_tools {
+                    let tool_id = tool_call.id.clone();
+                    match serde_json::from_str::<Value>(&tool_call.arguments) {
+                        Ok(value) => {
+                            let tool_name = tool_call.name.clone();
+                            let tool_id = tool_call.id.clone();
+                            let tool_task_registry = registry.clone();
+                            let tx_events = tx_events.clone();
+                            tool_set.spawn(async move {
+                                _ = tx_events.send(AppEvent::ToolCallStart {
+                                    name: tool_name.clone(),
+                                    args: value.to_string(),
+                                });
+                                let result: Result<String> = tool_task_registry
+                                    .execute(&tool_name.clone(), value.clone())
+                                    .await;
+                                match &result {
+                                    Ok(r) => {
+                                        _ = tx_events.send(AppEvent::ToolCallOutput {
+                                            name: tool_name,
+                                            output: r.clone(),
+                                            success: true,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        _ = tx_events.send(AppEvent::ToolCallOutput {
+                                            name: tool_name,
+                                            output: e.to_string(),
+                                            success: false,
+                                        });
+                                    }
+                                }
+                                match result {
+                                    Ok(r) => Message::tool_result(&tool_id, &r),
+                                    Err(e) => Message::tool_result(
+                                        &tool_call.id,
+                                        &format!("failed to execute tool call {e}"),
+                                    ),
+                                }
+                            });
+                        }
+                        Err(e) => messages.push(Message::tool_result(
+                            &tool_id,
+                            &format!("tool arguments were not valid JSON: {e}"),
+                        )),
+                    };
+                }
 
-                // if message.content.is_some() || message.tool_calls.is_some() {
-                //     let mut msg = ChatCompletionRequestAssistantMessageArgs::default();
-                //     if let Some(tool_calls) = message.tool_calls.clone() {
-                //         msg.tool_calls(tool_calls);
-                //     }
-                //     if let Some(content) = message.content.clone() {
-                //         msg.content(content);
-                //     }
-                //     messages.push(msg.build()?.into());
-                // }
+                let cancelled = loop {
+                    let next = tokio::select! {
+                        result = tool_set.join_next() => result,
+                        _ = token.cancelled() => break 'turn,
+                        _ = turn_token.cancelled() => break 'turn,
+                    };
+                    match next {
+                        Some(Ok(tool_message)) => messages.push(tool_message),
+                        Some(Err(e)) => eprintln!("Chat completion stream error: {e}"),
+                        None => break false,
+                    }
+                };
+                if cancelled {
+                    break 'turn;
+                }
 
-                // if let Some(content) = &message.content
-                //     && !content.is_empty()
-                // {
-                //     let _ = tx_events.send(AppEvent::AssistantResponse(content.clone()));
-                // }
-
-                // match choice.finish_reason {
-                //     Some(FinishReason::Stop) | Some(FinishReason::Length) => {
-                //         break;
-                //     }
-                //     _ => {}
-                // }
-
-                // let Some(tool_calls) = message.tool_calls else {
-                //     break;
-                // };
-
-                // Tool calls run on a dedicated JoinSet so the whole batch can
-                // be aborted atomically when the app or the current turn is
-                // cancelled. Aborting drops the futures, which cancels in-flight
-                // `fetch` requests and (via `kill_on_drop`) terminates running
-                // `bash` children.
-                // let mut tool_set: JoinSet<ChatCompletionRequestMessage> = JoinSet::new();
-                // for tool_call_enum in tool_calls {
-                //     // Extract the function tool call from the enum
-                //     if let ChatCompletionMessageToolCalls::Function(tool_call) = tool_call_enum {
-                //         let id = tool_call.id.clone();
-                //         let name = tool_call.function.name.clone();
-                //         let args = tool_call.function.arguments.clone();
-
-                //         let _ = tx_events.send(AppEvent::ToolCallStart {
-                //             name: name.clone(),
-                //             args: args.clone(),
-                //         });
-
-                //         let tx_events = tx_events.clone();
-                //         tool_set.spawn(async move {
-                //             let result: Result<String> = call_fn(&name, &args).await;
-                //             let output = match &result {
-                //                 Ok(output) => output.clone(),
-                //                 Err(err) => err.to_string(),
-                //             };
-                //             let success = result.is_ok();
-                //             let _ = tx_events.send(AppEvent::ToolCallOutput {
-                //                 name: name.clone(),
-                //                 output: output.clone(),
-                //                 success,
-                //             });
-                //             ChatCompletionRequestToolMessage {
-                //                 content: output.into(),
-                //                 tool_call_id: id,
-                //             }
-                //             .into()
-                //         });
-                //     }
-                // }
-
-                // Drive the tool batch to completion, but abort everything the
-                // instant it is cancelled.
-                // let cancelled = loop {
-                //     let next = tokio::select! {
-                //         n = tool_set.join_next() => n,
-                //         _ = turn_token.cancelled() => { tool_set.abort_all(); break true; },
-                //         _ = token.cancelled() => { tool_set.abort_all(); break true; },
-                //     };
-                //     match next {
-                //         Some(Ok(tool_message)) => messages.push(tool_message),
-                //         // A panicked or aborted tool task: nothing to append;
-                //         // errors were already surfaced as ToolCallOutput.
-                //         Some(Err(_)) => {}
-                //         None => break false,
-                //     }
-                // };
-                // if cancelled {
-                //     break 'turn;
-                // }
+                if finish_reason.as_deref() == Some("stop")
+                    || finish_reason.as_deref() == Some("length")
+                {
+                    return Ok(());
+                }
             }
             Ok(())
         }

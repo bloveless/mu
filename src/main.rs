@@ -6,6 +6,7 @@ mod tools;
 mod ui;
 mod wrap;
 
+use std::sync::Arc;
 use std::{env, process, time::Duration};
 
 use anyhow::Result;
@@ -78,7 +79,7 @@ async fn main() -> Result<()> {
     set.spawn(run_agent(
         agent_token,
         client,
-        registry,
+        Arc::new(registry),
         agent_events,
         ai_rx,
     ));

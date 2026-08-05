@@ -78,7 +78,7 @@ impl Tool for WebSearchTool {
         let response = self
             .client
             // TODO: experiment with https://www.tavily.com/
-            .post(&format!("https://api.firecrawl.dev/v2/search"))
+            .post("https://api.firecrawl.dev/v2/search".to_string())
             .header(
                 "Authorization",
                 format!("Bearer {}", self.firecrawl_api_key),

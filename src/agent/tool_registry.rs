@@ -12,7 +12,7 @@ pub trait Tool {
     fn definition(&self) -> ToolDefinition;
     async fn execute(&self, args: Value) -> Result<String>;
     fn requires_approval(&self) -> bool {
-        return true;
+        true
     }
 }
 
