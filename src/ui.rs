@@ -688,7 +688,7 @@ impl App {
         }
 
         // Append height of streaming thinking content
-        if let Some(streaming_thinking_item) = &mut self.streaming_content_item
+        if let Some(streaming_thinking_item) = &mut self.streaming_thinking_item
             && let HistoryItem::AssistantThinking(wrapped) = streaming_thinking_item
         {
             wrapped.ensure_wrapped_at(wrap_width);

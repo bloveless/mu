@@ -14,10 +14,6 @@ pub struct ReadFileTool;
 
 #[async_trait]
 impl Tool for ReadFileTool {
-    fn name(&self) -> &str {
-        "read_file"
-    }
-
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             tool_type: "function".into(),
@@ -59,10 +55,6 @@ pub struct ListFilesTool;
 
 #[async_trait]
 impl Tool for ListFilesTool {
-    fn name(&self) -> &str {
-        "list_files"
-    }
-
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             tool_type: "function".into(),
@@ -117,20 +109,16 @@ impl Tool for ListFilesTool {
 
 // --- WriteFile -------------------------------------------------------------------
 
-pub struct WriteFileTool;
+pub struct EditFileTool;
 
 #[async_trait]
-impl Tool for WriteFileTool {
-    fn name(&self) -> &str {
-        "write_file"
-    }
-
+impl Tool for EditFileTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             tool_type: "function".into(),
             function: FunctionDefinition {
-                name: "write_file".into(),
-                description: "Write content to a file at the specified path. \
+                name: "edit_file".into(),
+                description: "Write content to a file at the specified path. Or create new files. \
                                               Creates parent directories if they don't exist. \
                                               Overwrites the file if it already exists."
                     .into(),
@@ -141,12 +129,16 @@ impl Tool for WriteFileTool {
                             "type": "string",
                             "description": "The file path to write to",
                         },
-                        "content": {
+                        "old_string": {
                             "type": "string",
-                            "description": "The content to write",
+                            "description": "The content that is attempting to be replaced. It must match exactly and only once. To create a new file this should be blank.",
+                        },
+                        "new_string": {
+                            "type": "string",
+                            "description": "The new content.",
                         },
                     },
-                    "required": ["path", "content"],
+                    "required": ["path", "old_string", "new_string"],
                 }),
             },
         }
@@ -215,10 +207,6 @@ pub struct DeleteFileTool;
 
 #[async_trait]
 impl Tool for DeleteFileTool {
-    fn name(&self) -> &str {
-        "delete_file"
-    }
-
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             tool_type: "function".into(),

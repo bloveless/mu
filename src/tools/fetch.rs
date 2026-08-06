@@ -35,10 +35,6 @@ impl FetchTool {
 
 #[async_trait]
 impl Tool for FetchTool {
-    fn name(&self) -> &str {
-        "fetch"
-    }
-
     fn definition(&self) -> ToolDefinition {
         // Note: This uses a special type for provider tools
         ToolDefinition {

@@ -8,7 +8,6 @@ use crate::api::types::ToolDefinition;
 
 #[async_trait]
 pub trait Tool {
-    fn name(&self) -> &str;
     fn definition(&self) -> ToolDefinition;
     async fn execute(&self, args: Value) -> Result<String>;
     fn requires_approval(&self) -> bool {
@@ -28,7 +27,8 @@ impl ToolRegistry {
     }
 
     pub fn register(&mut self, tool: Box<dyn Tool + Send + Sync>) {
-        self.tools.insert(tool.name().to_string(), tool);
+        let name = tool.definition().function.name.clone();
+        self.tools.insert(name, tool);
     }
 
     pub fn definitions(&self) -> Vec<ToolDefinition> {

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, future::pending, sync::Arc};
 
 use anyhow::Result;
 use serde_json::Value;
@@ -33,26 +33,10 @@ struct PendingToolCall {
 pub async fn run_agent(
     token: CancellationToken,
     client: OpenAIClient,
-    registry: Arc<ToolRegistry>,
-    event_tx: std::sync::mpsc::Sender<AppEvent>,
-    ai_rx: tokio::sync::mpsc::UnboundedReceiver<AIEvent>,
-) -> Result<()> {
-    let fatal_events = event_tx.clone();
-    let result = openai_stuff(&token, &client, registry, event_tx, ai_rx).await;
-    if let Err(err) = &result {
-        // The agent is dying; tell the UI so it can exit with a useful
-        // message instead of hanging on the next prompt send.
-        let _ = fatal_events.send(AppEvent::Fatal(format!("{err:?}")));
-    }
-    result
-}
-
-async fn openai_stuff(
-    token: &CancellationToken,
-    client: &OpenAIClient,
-    registry: Arc<ToolRegistry>,
-    tx_events: std::sync::mpsc::Sender<AppEvent>,
-    mut rx_events: tokio::sync::mpsc::UnboundedReceiver<AIEvent>,
+    model: String,
+    registry: ToolRegistry,
+    app_events: std::sync::mpsc::Sender<AppEvent>,
+    mut ai_events: tokio::sync::mpsc::UnboundedReceiver<AIEvent>,
 ) -> Result<()> {
     let mut messages: Vec<Message> = vec![Message::system(DEFAULT_INSTRUCTIONS)];
 
@@ -61,7 +45,7 @@ async fn openai_stuff(
         // is shutting down. The UI also drops `ai_tx` on quit, which drives
         // `recv` to `None` as a backup path.
         let (prompt, turn_token) = tokio::select! {
-            ev = rx_events.recv() => match ev {
+            ev = ai_events.recv() => match ev {
                 Some(AIEvent::UserPrompt(p, t)) => (p, t),
                 None => return Ok(()),
             },
@@ -83,7 +67,7 @@ async fn openai_stuff(
                 }
 
                 let request = ChatCompletionRequest {
-                    model: "deepseek-v4-flash".into(),
+                    model: model.clone(),
                     messages: messages.clone(),
                     tools: Some(registry.definitions()),
                     stream: Some(true),
@@ -91,7 +75,7 @@ async fn openai_stuff(
 
                 let mut finish_reason = None;
                 let mut assistant_message = String::new();
-                let mut pending_tools: Vec<PendingToolCall> = Vec::new();
+                let mut pending_tools: HashMap<usize, PendingToolCall> = HashMap::new();
 
                 let chat_completion_handle = client.chat_completion_stream(request, |chunk| {
                     if let Some(choice) = chunk.choices.first() {
@@ -102,40 +86,37 @@ async fn openai_stuff(
                         let delta = &choice.delta;
 
                         if let Some(reasoning_content) = &delta.reasoning_content {
-                            tx_events
+                            app_events
                                 .send(AppEvent::ThinkingChunkReceived(reasoning_content.clone()))
                                 .ok();
                         }
 
                         if let Some(content) = &delta.content {
                             assistant_message.push_str(content.as_str());
-                            tx_events
+                            app_events
                                 .send(AppEvent::ChunkReceived(content.clone()))
                                 .ok();
                         }
 
                         if let Some(tool_calls) = &delta.tool_calls {
                             for tc in tool_calls {
-                                let idx = tc.index;
-
-                                while pending_tools.len() <= idx {
-                                    pending_tools.push(PendingToolCall {
+                                let pending_tool =
+                                    pending_tools.entry(tc.index).or_insert(PendingToolCall {
                                         id: String::new(),
                                         name: String::new(),
                                         arguments: String::new(),
-                                    })
-                                }
+                                    });
 
                                 // Fill in the fields as they arrive
                                 if let Some(id) = &tc.id {
-                                    pending_tools[idx].id = id.clone();
+                                    pending_tool.id = id.clone();
                                 }
                                 if let Some(func) = &tc.function {
                                     if let Some(name) = &func.name {
-                                        pending_tools[idx].name = name.clone();
+                                        pending_tool.name = name.clone();
                                     }
                                     if let Some(args) = &func.arguments {
-                                        pending_tools[idx].arguments.push_str(args);
+                                        pending_tool.arguments.push_str(args);
                                     }
                                 }
                             }
@@ -156,7 +137,7 @@ async fn openai_stuff(
                 if !assistant_message.is_empty() || !pending_tools.is_empty() {
                     let mut msg = Message::assistant(&assistant_message);
                     let mut tool_calls = vec![];
-                    for tc in &pending_tools {
+                    for (_, tc) in &pending_tools {
                         let tool_call = ToolCall {
                             id: tc.id.clone(),
                             call_type: "function".to_string(),
@@ -171,69 +152,46 @@ async fn openai_stuff(
                     messages.push(msg);
                 }
 
-                let mut tool_set = JoinSet::new();
-                for tool_call in pending_tools {
+                for (_, tool_call) in pending_tools {
                     let tool_id = tool_call.id.clone();
-                    match serde_json::from_str::<Value>(&tool_call.arguments) {
+                    let message = match serde_json::from_str::<Value>(&tool_call.arguments) {
                         Ok(value) => {
-                            let tool_name = tool_call.name.clone();
-                            let tool_id = tool_call.id.clone();
-                            let tool_task_registry = registry.clone();
-                            let tx_events = tx_events.clone();
-                            tool_set.spawn(async move {
-                                _ = tx_events.send(AppEvent::ToolCallStart {
-                                    name: tool_name.clone(),
-                                    args: value.to_string(),
-                                });
-                                let result: Result<String> = tool_task_registry
-                                    .execute(&tool_name.clone(), value.clone())
-                                    .await;
-                                match &result {
-                                    Ok(r) => {
-                                        _ = tx_events.send(AppEvent::ToolCallOutput {
-                                            name: tool_name,
-                                            output: r.clone(),
-                                            success: true,
-                                        });
-                                    }
-                                    Err(e) => {
-                                        _ = tx_events.send(AppEvent::ToolCallOutput {
-                                            name: tool_name,
-                                            output: e.to_string(),
-                                            success: false,
-                                        });
-                                    }
-                                }
-                                match result {
-                                    Ok(r) => Message::tool_result(&tool_id, &r),
-                                    Err(e) => Message::tool_result(
-                                        &tool_call.id,
-                                        &format!("failed to execute tool call {e}"),
-                                    ),
-                                }
+                            _ = app_events.send(AppEvent::ToolCallStart {
+                                name: tool_call.name.clone(),
+                                args: value.to_string(),
                             });
+                            let result: Result<String> =
+                                registry.execute(&tool_call.name, value).await;
+                            match &result {
+                                Ok(r) => {
+                                    _ = app_events.send(AppEvent::ToolCallOutput {
+                                        name: tool_call.name.clone(),
+                                        output: r.clone(),
+                                        success: true,
+                                    });
+                                }
+                                Err(e) => {
+                                    _ = app_events.send(AppEvent::ToolCallOutput {
+                                        name: tool_call.name.clone(),
+                                        output: e.to_string(),
+                                        success: false,
+                                    });
+                                }
+                            }
+                            match result {
+                                Ok(r) => Message::tool_result(&tool_id, &r),
+                                Err(e) => Message::tool_result(
+                                    &tool_call.id,
+                                    &format!("failed to execute tool call {e}"),
+                                ),
+                            }
                         }
-                        Err(e) => messages.push(Message::tool_result(
+                        Err(e) => Message::tool_result(
                             &tool_id,
                             &format!("tool arguments were not valid JSON: {e}"),
-                        )),
+                        ),
                     };
-                }
-
-                let cancelled = loop {
-                    let next = tokio::select! {
-                        result = tool_set.join_next() => result,
-                        _ = token.cancelled() => break 'turn,
-                        _ = turn_token.cancelled() => break 'turn,
-                    };
-                    match next {
-                        Some(Ok(tool_message)) => messages.push(tool_message),
-                        Some(Err(e)) => eprintln!("Chat completion stream error: {e}"),
-                        None => break false,
-                    }
-                };
-                if cancelled {
-                    break 'turn;
+                    messages.push(message);
                 }
 
                 if finish_reason.as_deref() == Some("stop")
@@ -256,10 +214,10 @@ async fn openai_stuff(
                 err,
                 serde_json::to_string_pretty(&messages).unwrap_or_default()
             );
-            let _ = tx_events.send(AppEvent::Error(debug));
+            let _ = app_events.send(AppEvent::Error(debug));
         }
         // Let the UI know the turn is over either way so it can clear the
         // "working…" indicator and re-enable prompt submission.
-        let _ = tx_events.send(AppEvent::TurnEnd);
+        let _ = app_events.send(AppEvent::TurnEnd);
     }
 }

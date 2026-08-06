@@ -42,10 +42,6 @@ impl WebSearchTool {
 
 #[async_trait]
 impl Tool for WebSearchTool {
-    fn name(&self) -> &str {
-        "web_search"
-    }
-
     fn definition(&self) -> ToolDefinition {
         // Note: This uses a special type for provider tools
         ToolDefinition {

@@ -21,7 +21,7 @@ use crate::agent::tool_registry::ToolRegistry;
 use crate::api::client::OpenAIClient;
 use crate::events::{AIEvent, AppEvent};
 use crate::tools::fetch::FetchTool;
-use crate::tools::file::{DeleteFileTool, ListFilesTool, ReadFileTool, WriteFileTool};
+use crate::tools::file::{DeleteFileTool, EditFileTool, ListFilesTool, ReadFileTool};
 use crate::tools::shell::{CodeExecutionTool, RunCommandTool};
 use crate::tools::web_search::WebSearchTool;
 
@@ -30,13 +30,9 @@ const DEFAULT_INSTRUCTIONS: &str = include_str!("DEFAULT_INSTRUCTIONS.md");
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
-    /// Run in JSON-RPC server mode instead of TUI mode.
-    #[arg(long)]
-    json: bool,
-
-    /// Port for the JSON-RPC server (default: 3000).
-    #[arg(long, default_value = "3000")]
-    port: u16,
+    /// The model to use for the harness (default: "deepseek-v4-flash").
+    #[arg(long, default_value = "deepseek-v4-flash")]
+    model: String,
 }
 
 #[tokio::main]
@@ -45,7 +41,7 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "console")]
     console_subscriber::init();
-    let _args = Args::parse();
+    let args = Args::parse();
     let mut set = tokio::task::JoinSet::new();
 
     let token = CancellationToken::new();
@@ -67,7 +63,7 @@ async fn main() -> Result<()> {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(ReadFileTool));
     registry.register(Box::new(ListFilesTool));
-    registry.register(Box::new(WriteFileTool));
+    registry.register(Box::new(EditFileTool));
     registry.register(Box::new(DeleteFileTool));
     registry.register(Box::new(RunCommandTool));
     registry.register(Box::new(CodeExecutionTool));
@@ -79,11 +75,11 @@ async fn main() -> Result<()> {
     set.spawn(run_agent(
         agent_token,
         client,
-        Arc::new(registry),
+        args.model,
+        registry,
         agent_events,
         ai_rx,
     ));
-
 
     let event_tx = event_tx.clone();
     let event_token = token.clone();

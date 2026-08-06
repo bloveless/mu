@@ -13,10 +13,6 @@ pub struct RunCommandTool;
 
 #[async_trait]
 impl Tool for RunCommandTool {
-    fn name(&self) -> &str {
-        "run_command"
-    }
-
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             tool_type: "function".into(),
@@ -90,15 +86,11 @@ pub struct CodeExecutionTool;
 
 #[async_trait]
 impl Tool for CodeExecutionTool {
-    fn name(&self) -> &str {
-        "code_execution"
-    }
-
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             tool_type: "function".into(),
             function: FunctionDefinition {
-                name: "execute_code".into(),
+                name: "code_execution".into(),
                 description: "Execute a code snippet in the specified language. \
                               Supports python, javascript/node, ruby, and bash."
                     .into(),
