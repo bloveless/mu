@@ -21,7 +21,7 @@ use crate::api::client::OpenAIClient;
 use crate::events::{AIEvent, AppEvent};
 use crate::tools::fetch::FetchTool;
 use crate::tools::file::{DeleteFileTool, EditFileTool, ListFilesTool, ReadFileTool};
-use crate::tools::shell::{CodeExecutionTool, RunCommandTool};
+use crate::tools::shell::RunCommandTool;
 use crate::tools::web_search::WebSearchTool;
 
 const DEFAULT_INSTRUCTIONS: &str = include_str!("DEFAULT_INSTRUCTIONS.md");
@@ -72,7 +72,6 @@ async fn main() -> Result<()> {
     registry.register(Box::new(EditFileTool));
     registry.register(Box::new(DeleteFileTool));
     registry.register(Box::new(RunCommandTool));
-    registry.register(Box::new(CodeExecutionTool));
     registry.register(Box::new(WebSearchTool::new(args.firecrawl_api_key.clone())));
     registry.register(Box::new(FetchTool::new(args.firecrawl_api_key)));
 

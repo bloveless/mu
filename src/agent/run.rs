@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::Result;
 use serde_json::Value;
@@ -73,7 +73,7 @@ pub async fn run_agent(
 
             let mut finish_reason = None;
             let mut assistant_message = String::new();
-            let mut pending_tools: HashMap<usize, PendingToolCall> = HashMap::new();
+            let mut pending_tools: BTreeMap<usize, PendingToolCall> = BTreeMap::new();
 
             let chat_completion_handle = client.chat_completion_stream(request, |chunk| {
                 if let Some(choice) = chunk.choices.first() {
@@ -150,7 +150,7 @@ pub async fn run_agent(
                 messages.push(msg);
             }
 
-            for (_, tool_call) in pending_tools {
+            for tool_call in pending_tools.values() {
                 let tool_id = tool_call.id.clone();
                 let message = match serde_json::from_str::<Value>(&tool_call.arguments) {
                     Ok(value) => {
