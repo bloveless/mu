@@ -6,8 +6,7 @@ mod tools;
 mod ui;
 mod wrap;
 
-use std::sync::Arc;
-use std::{env, process, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
@@ -30,14 +29,30 @@ const DEFAULT_INSTRUCTIONS: &str = include_str!("DEFAULT_INSTRUCTIONS.md");
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Args {
+    /// The base URL for the OpenAI-compatible API (default: "https://opencode.ai/zen/go/v1/chat/completions").
+    #[arg(
+        long,
+        env = "OPENCODE_BASE_URL",
+        default_value = "https://opencode.ai/zen/go/v1/chat/completions"
+    )]
+    base_url: String,
+
     /// The model to use for the harness (default: "deepseek-v4-flash").
-    #[arg(long, default_value = "deepseek-v4-flash")]
+    #[arg(long, env = "OPENCODE_MODEL", default_value = "deepseek-v4-flash")]
     model: String,
+
+    /// The API key for the OpenAI-compatible API.
+    #[arg(long, env = "OPENCODE_API_KEY")]
+    api_key: String,
+
+    /// The firecrawl API key.
+    #[arg(long, env = "FIRECRAWL_API_KEY")]
+    firecrawl_api_key: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenvy::dotenv()?;
+    _ = dotenvy::dotenv();
 
     #[cfg(feature = "console")]
     console_subscriber::init();
@@ -48,16 +63,7 @@ async fn main() -> Result<()> {
     let (event_tx, event_rx) = std::sync::mpsc::channel::<AppEvent>();
     let (ai_tx, ai_rx) = mpsc::unbounded_channel::<AIEvent>();
 
-    let base_url = env::var("OPENCODE_BASE_URL")
-        .unwrap_or_else(|_| "https://opencode.ai/zen/go/v1/chat/completions".to_string());
-    let api_key = env::var("OPENCODE_API_KEY").unwrap_or_else(|_| {
-        eprintln!("OPENCODE_API_KEY is not set");
-        process::exit(1);
-    });
-    let firecrawl_api_key =
-        std::env::var("FIRECRAWL_API_KEY").expect("FIRECRAWL_API_KEY must be set");
-
-    let client = OpenAIClient::new(base_url, api_key);
+    let client = OpenAIClient::new(args.base_url, args.api_key);
 
     // Build the tool registry
     let mut registry = ToolRegistry::new();
@@ -67,19 +73,31 @@ async fn main() -> Result<()> {
     registry.register(Box::new(DeleteFileTool));
     registry.register(Box::new(RunCommandTool));
     registry.register(Box::new(CodeExecutionTool));
-    registry.register(Box::new(WebSearchTool::new(firecrawl_api_key.clone())));
-    registry.register(Box::new(FetchTool::new(firecrawl_api_key)));
+    registry.register(Box::new(WebSearchTool::new(args.firecrawl_api_key.clone())));
+    registry.register(Box::new(FetchTool::new(args.firecrawl_api_key)));
 
     let agent_token = token.clone();
     let agent_events = event_tx.clone();
-    set.spawn(run_agent(
-        agent_token,
-        client,
-        args.model,
-        registry,
-        agent_events,
-        ai_rx,
-    ));
+    set.spawn(async move {
+        match run_agent(
+            agent_token,
+            client,
+            args.model,
+            registry,
+            agent_events.clone(),
+            ai_rx,
+        )
+        .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                _ = agent_events.send(AppEvent::Fatal(format!("Agent error: {e:#}")));
+                return Err(e);
+            }
+        }
+
+        Ok(())
+    });
 
     let event_tx = event_tx.clone();
     let event_token = token.clone();
@@ -108,25 +126,40 @@ async fn main() -> Result<()> {
         Ok(())
     });
 
+    let shutdown_token = token.clone();
     set.spawn_blocking(move || {
         let mut terminal = ratatui::init();
-        if let Err(e) = ui::App::new(event_rx, ai_tx).run(&mut terminal) {
-            eprintln!("UI error: {:?}", e);
-        }
+        let result = ui::App::new(event_rx, ai_tx).run(&mut terminal);
         ratatui::restore();
 
         // The UI has quit. Cancel so the agent's `select!` arms fire and the
         // crossterm reader winds down, then join both helper threads.
         token.cancel();
 
-        Ok(())
+        result
     });
 
+    let mut task_error = None;
     while let Some(result) = set.join_next().await {
         match result {
-            Ok(output) => println!("Task finished: {:?}", output),
-            Err(e) => eprintln!("Task error: {:?}", e),
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                shutdown_token.cancel();
+                if task_error.is_none() {
+                    task_error = Some(error)
+                }
+            }
+            Err(e) => {
+                shutdown_token.cancel();
+                if task_error.is_none() {
+                    task_error = Some(e.into());
+                }
+            }
         }
+    }
+
+    if let Some(error) = task_error {
+        return Err(error);
     }
 
     Ok(())

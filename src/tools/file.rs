@@ -125,7 +125,7 @@ impl Tool for EditFileTool {
                 parameters: json!({
                     "type": "object",
                     "properties": {
-                        "path": {
+                        "file_path": {
                             "type": "string",
                             "description": "The file path to write to",
                         },
@@ -138,7 +138,7 @@ impl Tool for EditFileTool {
                             "description": "The new content.",
                         },
                     },
-                    "required": ["path", "old_string", "new_string"],
+                    "required": ["file_path", "old_string", "new_string"],
                 }),
             },
         }
