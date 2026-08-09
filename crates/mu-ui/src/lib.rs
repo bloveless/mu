@@ -17,8 +17,11 @@
 mod app;
 mod history;
 mod input;
-mod render;
+pub(crate) mod render;
 mod theme;
+
+#[cfg(test)]
+mod snapshot_tests;
 
 use std::sync::mpsc::{SendError, Sender};
 

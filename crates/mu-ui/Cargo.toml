@@ -5,5 +5,8 @@ edition = "2024"
 rust-version = "1.88"
 
 [dependencies]
-ratatui = "0.30.2"
+ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info"] }
 unicode-width = "0.2.2"
+
+[dev-dependencies]
+insta = "1"

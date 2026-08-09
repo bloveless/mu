@@ -14,7 +14,9 @@ pub struct Theme {
     pub footer: Style,
     pub scroll_indicator: Style,
     pub thinking: Style,
+    pub user_prompt: Style,
     pub message: Style,
+    pub code_fence: Style,
     pub tool_running: Style,
     pub tool_success: Style,
     pub tool_failure: Style,
@@ -32,7 +34,11 @@ impl Default for Theme {
             thinking: Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
+            user_prompt: Style::default().fg(Color::Cyan),
             message: Style::default(),
+            code_fence: Style::default()
+                .fg(Color::DarkGray)
+                .bg(Color::Rgb(0x20, 0x20, 0x20)),
             tool_running: Style::default().fg(Color::Yellow),
             tool_success: Style::default().fg(Color::Green),
             tool_failure: Style::default().fg(Color::Red),
