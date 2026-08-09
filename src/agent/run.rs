@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use anyhow::Result;
 use serde_json::Value;
@@ -9,7 +9,7 @@ use crate::{
     agent::tool_registry::ToolRegistry,
     api::{
         client::OpenAIClient,
-        types::{ChatCompletionRequest, FunctionCall, Message, ToolCall},
+        types::{ChatCompletionRequest, FunctionCall, Message, StreamOptions, ToolCall},
     },
     events::{AIEvent, AppEvent},
 };
@@ -69,6 +69,9 @@ pub async fn run_agent(
                 messages: messages.clone(),
                 tools: Some(registry.definitions()),
                 stream: Some(true),
+                stream_options: Some(StreamOptions {
+                    include_usage: true,
+                }),
             };
 
             let mut finish_reason = None;
@@ -119,6 +122,16 @@ pub async fn run_agent(
                             }
                         }
                     }
+                }
+
+                if let Some(usage) = &chunk.usage {
+                    app_events
+                        .send(AppEvent::UsageReceived {
+                            prompt_tokens: usage.prompt_tokens,
+                            completion_tokens: usage.completion_tokens,
+                            total_tokens: usage.total_tokens,
+                        })
+                        .ok();
                 }
             });
 

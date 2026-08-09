@@ -91,6 +91,14 @@ pub struct ChatCompletionRequest {
     pub tools: Option<Vec<ToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<StreamOptions>,
+}
+
+/// Stream options for chat completions.
+#[derive(Debug, Serialize)]
+pub struct StreamOptions {
+    pub include_usage: bool,
 }
 
 /// Non-streaming response.

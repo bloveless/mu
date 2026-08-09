@@ -3,6 +3,8 @@ use tokio_util::sync::CancellationToken;
 pub enum AppEvent {
     /// Terminal key press (TUI only; never produced in JSON mode).
     Key(crossterm::event::KeyEvent),
+    /// Text pasted by the terminal (bracketed paste).
+    Paste(String),
     /// Terminal resize (TUI only).
     Resize,
     ThinkingChunkReceived(String),
@@ -16,6 +18,11 @@ pub enum AppEvent {
         name: String,
         output: String,
         success: bool,
+    },
+    UsageReceived {
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        total_tokens: u32,
     },
     /// The agent finished a turn: it stopped, hit the iteration cap, was
     /// cancelled by the user, or hit a per-turn error already surfaced as

@@ -4,7 +4,6 @@ mod events;
 mod theme;
 mod tools;
 mod ui;
-mod wrap;
 
 use std::time::Duration;
 
@@ -13,7 +12,8 @@ use clap::Parser;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind};
+use crossterm::execute;
 
 use crate::agent::run::run_agent;
 use crate::agent::tool_registry::ToolRegistry;
@@ -111,6 +111,11 @@ async fn main() -> Result<()> {
                             break;
                         }
                     }
+                    Ok(Event::Paste(text)) => {
+                        if event_tx.send(AppEvent::Paste(text)).is_err() {
+                            break;
+                        }
+                    }
                     Ok(Event::Resize(_, _)) => {
                         if event_tx.send(AppEvent::Resize).is_err() {
                             break;
@@ -127,9 +132,11 @@ async fn main() -> Result<()> {
 
     let shutdown_token = token.clone();
     set.spawn_blocking(move || {
-        let mut terminal = ratatui::init();
-        let result = ui::App::new(event_rx, ai_tx).run(&mut terminal);
-        ratatui::restore();
+        crossterm::terminal::enable_raw_mode()?;
+        execute!(std::io::stdout(), EnableBracketedPaste)?;
+        let result = ui::App::new(event_rx, ai_tx).run();
+        execute!(std::io::stdout(), DisableBracketedPaste)?;
+        crossterm::terminal::disable_raw_mode()?;
 
         // The UI has quit. Cancel so the agent's `select!` arms fire and the
         // crossterm reader winds down, then join both helper threads.

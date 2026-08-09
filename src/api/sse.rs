@@ -5,6 +5,7 @@ use serde::Deserialize;
 pub struct StreamChunk {
     pub id: Option<String>,
     pub choices: Vec<StreamChoice>,
+    pub usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,4 +40,11 @@ pub struct StreamToolCall {
 pub struct StreamFunction {
     pub name: Option<String>,
     pub arguments: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Usage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
 }
